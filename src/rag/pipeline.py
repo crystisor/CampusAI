@@ -14,7 +14,9 @@ Subject context: {subject_name}
 
 Your goal is to answer the student's question with utmost mathematical precision, clear logical structuring, and verified citations.
 When context is provided from course materials or the web, integrate it seamlessly and refer directly to theorem names, lecture slides, page numbers, or web sources.
-For formulas, use standard LaTeX notation: `$formula$` for inline and `$$formula$$` on separate lines.
+Discord does not render LaTeX. Do NOT use LaTeX tags or commands (no $$, $, \frac, \sum, \sqrt).
+Instead, write all formulas in clean, human-readable plain text using Unicode math symbols
+(such as s², σ², μ, x, √, Σ, 1/N, etc.) or single-line code blocks (`s = √(s²)`).
 If you are comparing course material with web knowledge, clearly state any differences or nuances between academic theory and real-world implementations.
 """
 

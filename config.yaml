@@ -13,8 +13,7 @@ ollama:
 reranker:
   model_name: "BAAI/bge-reranker-v2-m3"
   top_k: 5
-  device: "auto" # "cuda", "cpu", or "auto"
-
+  device: "cpu"
 qdrant:
   host: "localhost"
   port: 6333
