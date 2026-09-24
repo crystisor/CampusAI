@@ -80,7 +80,13 @@
             <!-- Header Bar -->
             <header class="top-nav">
                 <div class="header-subject-info">
-                    <h2 id="currentSubjectTitle">Calculus 1</h2>
+                    <div class="subject-title-row">
+                        <h2 id="currentSubjectTitle">Calculus 1</h2>
+                        <button id="btnDeleteCurrentSubject" class="btn-subtle btn-subtle-danger" title="Delete current subject">
+                            <i data-lucide="trash-2"></i>
+                            <span>Delete Subject</span>
+                        </button>
+                    </div>
                     <div class="binding-tags" id="subjectChannelTags">
                         <span class="channel-tag"><i data-lucide="hash"></i> calculus-1</span>
                     </div>
@@ -262,6 +268,38 @@
             </form>
         </div>
     </div>
+
+    <!-- Modal: Delete Subject Confirmation -->
+    <div id="modalDeleteSubject" class="modal-overlay" style="display: none;">
+        <div class="modal-card modal-danger">
+            <div class="modal-header">
+                <div class="modal-header-danger">
+                    <div class="modal-danger-icon">
+                        <i data-lucide="alert-triangle"></i>
+                    </div>
+                    <h3>Delete Subject</h3>
+                </div>
+                <button id="btnCloseDeleteModal" class="btn-icon"><i data-lucide="x"></i></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to delete <strong id="deleteSubjectTargetName">this subject</strong>?</p>
+                <div class="delete-warning-box">
+                    <i data-lucide="alert-circle"></i>
+                    <span>This permanently deletes all uploaded PDFs, extracted formulas, and its indexed vectors from the <strong>Qdrant vector database</strong>. This action cannot be undone.</span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-subtle" id="btnCancelDeleteModal">Cancel</button>
+                <button type="button" class="btn-danger" id="btnConfirmDeleteSubject">
+                    <i data-lucide="trash-2"></i>
+                    <span id="confirmDeleteText">Delete Subject</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notifications Container -->
+    <div id="toastContainer" class="toast-container"></div>
 
     <!-- KaTeX JS & Auto-render extension -->
     <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>

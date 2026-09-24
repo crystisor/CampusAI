@@ -76,5 +76,15 @@ class ChannelManager:
                 names.append(b.get("channel_name", b.get("channel_id")))
         return names
 
+    def unbind_subject(self, subject_id: str) -> int:
+        """Unbind all Discord channels bound to a subject ID. Returns count of removed bindings."""
+        sub = subject_id.lower().strip()
+        to_delete = [c_id for c_id, b in self._bindings.items() if b.get("subject_id") == sub]
+        for c_id in to_delete:
+            del self._bindings[c_id]
+        if to_delete:
+            self.save()
+        return len(to_delete)
+
 # Singleton instance
 channel_manager = ChannelManager()
