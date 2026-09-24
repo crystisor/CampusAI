@@ -1,0 +1,39 @@
+# College Study Companion Configuration
+discord:
+  token: "${DISCORD_BOT_TOKEN}"
+  status_message: "Studying College Subjects"
+
+ollama:
+  base_url: "http://localhost:11434"
+  llm_model: "Spark-X2.5-4B"
+  router_model: "Arch-Router-1.5B"
+  embedding_model: "bge-m3"
+  request_timeout: 120.0
+
+reranker:
+  model_name: "BAAI/bge-reranker-v2-m3"
+  top_k: 5
+  device: "auto" # "cuda", "cpu", or "auto"
+
+qdrant:
+  host: "localhost"
+  port: 6333
+  grpc_port: 6334
+  prefer_grpc: false
+  collection_prefix: "subject_"
+
+search:
+  provider: "duckduckgo" # "duckduckgo" or "tavily"
+  tavily_api_key: "${TAVILY_API_KEY}"
+  max_results: 5
+
+ingestion:
+  layout_model: "pp-doclayoutV3"
+  ocr_model: "glm-ocr"
+  storage_dir: "storage/subjects"
+  chunk_size: 600
+  chunk_overlap: 100
+
+web:
+  host: "127.0.0.1"
+  port: 8000

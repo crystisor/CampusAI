@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CampusAI Studio — Course Knowledge & OCR Hub</title>
+    <!-- Fonts: Inter & JetBrains Mono -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <!-- KaTeX CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+    <!-- Dashboard Styling -->
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+    <div class="app-layout">
+        <!-- 1. SIDEBAR -->
+        <aside class="sidebar">
+            <div class="brand">
+                <div class="brand-icon">
+                    <i data-lucide="sparkles"></i>
+                </div>
+                <div class="brand-details">
+                    <h1>CampusAI</h1>
+                    <span class="badge">Study Hub v1.0</span>
+                </div>
+            </div>
+
+            <!-- Subject Directory List -->
+            <div class="sidebar-section">
+                <div class="section-header">
+                    <span class="section-title">SUBJECTS</span>
+                    <button id="btnNewSubject" class="btn-icon" title="Add Subject">
+                        <i data-lucide="plus"></i>
+                    </button>
+                </div>
+                <div id="subjectList" class="subject-list">
+                    <div class="skeleton-item">Loading subjects...</div>
+                </div>
+            </div>
+
+            <!-- System Health & VRAM Drawer -->
+            <div class="sidebar-footer">
+                <div class="health-card">
+                    <div class="health-header">
+                        <span class="health-title">SYSTEM HARDWARE</span>
+                        <span id="gpuStatusBadge" class="status-indicator online"></span>
+                    </div>
+                    <div class="health-item">
+                        <div class="health-meta">
+                            <span class="item-name">RTX 2060 SUPER</span>
+                            <span id="vramText" class="item-val">1.4 / 8.0 GB</span>
+                        </div>
+                        <div class="progress-bar-bg">
+                            <div id="vramBar" class="progress-bar-fill" style="width: 18%;"></div>
+                        </div>
+                    </div>
+
+                    <div class="service-indicators">
+                        <div class="service-pill" id="ollamaPill">
+                            <i data-lucide="cpu"></i>
+                            <span>Ollama</span>
+                            <div class="dot online"></div>
+                        </div>
+                        <div class="service-pill" id="qdrantPill">
+                            <i data-lucide="database"></i>
+                            <span>Qdrant</span>
+                            <div class="dot online"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- 2. MAIN WORKSPACE -->
+        <main class="main-content">
+            <!-- Header Bar -->
+            <header class="top-nav">
+                <div class="header-subject-info">
+                    <h2 id="currentSubjectTitle">Calculus 1</h2>
+                    <div class="binding-tags" id="subjectChannelTags">
+                        <span class="channel-tag"><i data-lucide="hash"></i> calculus-1</span>
+                    </div>
+                </div>
+
+                <div class="header-metrics">
+                    <div class="metric-card">
+                        <span class="metric-label">DOCUMENTS</span>
+                        <span class="metric-val" id="metricDocs">0</span>
+                    </div>
+                    <div class="metric-card">
+                        <span class="metric-label">PARSED PAGES</span>
+                        <span class="metric-val" id="metricPages">0</span>
+                    </div>
+                    <div class="metric-card">
+                        <span class="metric-label">INDEXED VECTORS</span>
+                        <span class="metric-val text-accent" id="metricVectors">0</span>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Workspace Scrollable Body -->
+            <div class="content-body">
+                <!-- Upload & Ingestion Zone -->
+                <section class="upload-zone">
+                    <div class="dropzone" id="pdfDropzone">
+                        <input type="file" id="fileInput" accept=".pdf" style="display: none;">
+                        <div class="dropzone-content">
+                            <div class="dropzone-icon">
+                                <i data-lucide="file-up"></i>
+                            </div>
+                            <div class="dropzone-text">
+                                <h3>Drop academic PDF syllabus or lecture notes here</h3>
+                                <p>High-accuracy OCR with <code>pp-doclayoutV3</code> & <code>glm-ocr</code> LaTeX recognition</p>
+                            </div>
+                            <button class="btn-primary" onclick="document.getElementById('fileInput').click()">
+                                <i data-lucide="upload"></i> Browse Files
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Live Processing Stepper (SSE) -->
+                    <div id="stepperContainer" class="stepper-card" style="display: none;">
+                        <div class="stepper-header">
+                            <div class="stepper-info">
+                                <span class="stepper-title" id="stepperFilename">Lecture_04_Derivatives.pdf</span>
+                                <span class="stepper-status-detail" id="stepperDetail">Extracting pages...</span>
+                            </div>
+                            <span class="stepper-percent" id="stepperProgressPercent">0%</span>
+                        </div>
+
+                        <!-- Progress Nodes -->
+                        <div class="stepper-nodes">
+                            <div class="step-node" id="step_pdf_split">
+                                <div class="step-icon"><i data-lucide="file-text"></i></div>
+                                <span>PDF Split</span>
+                            </div>
+                            <div class="step-connector"></div>
+                            <div class="step-node" id="step_layout">
+                                <div class="step-icon"><i data-lucide="layout-grid"></i></div>
+                                <span>Layout</span>
+                            </div>
+                            <div class="step-connector"></div>
+                            <div class="step-node" id="step_ocr">
+                                <div class="step-icon"><i data-lucide="binary"></i></div>
+                                <span>Formula OCR</span>
+                            </div>
+                            <div class="step-connector"></div>
+                            <div class="step-node" id="step_markdown">
+                                <div class="step-icon"><i data-lucide="code"></i></div>
+                                <span>Markdown</span>
+                            </div>
+                            <div class="step-connector"></div>
+                            <div class="step-node" id="step_embed">
+                                <div class="step-icon"><i data-lucide="git-commit"></i></div>
+                                <span>bge-m3 Embed</span>
+                            </div>
+                            <div class="step-connector"></div>
+                            <div class="step-node" id="step_indexed">
+                                <div class="step-icon"><i data-lucide="check-circle-2"></i></div>
+                                <span>Indexed</span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Document & Formula Inspection Studio (Split-Pane View) -->
+                <section class="studio-section">
+                    <div class="studio-toolbar">
+                        <div class="doc-selector-wrap">
+                            <label>DOCUMENT:</label>
+                            <select id="docSelect" class="form-select">
+                                <option value="">Select a document to inspect...</option>
+                            </select>
+                        </div>
+
+                        <div class="page-navigator" id="pageNavigator" style="display: none;">
+                            <button id="btnPrevPage" class="btn-subtle" title="Previous Page">
+                                <i data-lucide="chevron-left"></i>
+                            </button>
+                            <span class="page-indicator">
+                                Page <strong id="currentPageNum">1</strong> of <span id="totalPagesNum">1</span>
+                            </span>
+                            <button id="btnNextPage" class="btn-subtle" title="Next Page">
+                                <i data-lucide="chevron-right"></i>
+                            </button>
+                        </div>
+
+                        <div class="studio-actions">
+                            <button id="btnToggleEdit" class="btn-subtle">
+                                <i data-lucide="edit-3"></i> <span id="toggleEditText">Edit Markdown</span>
+                            </button>
+                            <button id="btnSaveMarkdown" class="btn-accent" style="display: none;">
+                                <i data-lucide="save"></i> Save Changes
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Split-Pane Container -->
+                    <div class="split-pane-container">
+                        <!-- Left Pane: PDF Page Render -->
+                        <div class="pane pane-left">
+                            <div class="pane-header">
+                                <i data-lucide="image"></i> Original PDF Page Scan
+                            </div>
+                            <div class="pane-body" id="pdfViewContainer">
+                                <div class="empty-state">
+                                    <i data-lucide="file-search"></i>
+                                    <p>Select or upload a document to inspect scan pages</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Right Pane: Markdown & KaTeX Preview -->
+                        <div class="pane pane-right">
+                            <div class="pane-header">
+                                <div class="pane-title">
+                                    <i data-lucide="function-square"></i> Structured Markdown & LaTeX Formulas
+                                </div>
+                            </div>
+                            <div class="pane-body">
+                                <!-- KaTeX Rendered View -->
+                                <div id="markdownRenderedView" class="markdown-preview">
+                                    <div class="empty-state">
+                                        <i data-lucide="terminal"></i>
+                                        <p>Extracted formulas and text will render with KaTeX math here</p>
+                                    </div>
+                                </div>
+                                <!-- Raw Markdown Editor (Toggleable) -->
+                                <textarea id="rawMarkdownEditor" class="markdown-editor" style="display: none;" placeholder="Edit Markdown & LaTeX formulas here..."></textarea>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modal: Create Subject -->
+    <div id="modalNewSubject" class="modal-overlay" style="display: none;">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3>Add College Subject</h3>
+                <button id="btnCloseModal" class="btn-icon"><i data-lucide="x"></i></button>
+            </div>
+            <form id="formNewSubject">
+                <div class="form-group">
+                    <label>Subject ID (e.g. linear_algebra)</label>
+                    <input type="text" id="inputSubjectId" required placeholder="linear_algebra" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label>Display Name</label>
+                    <input type="text" id="inputSubjectName" placeholder="Linear Algebra & Matrix Theory" class="form-input">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn-subtle" id="btnCancelModal">Cancel</button>
+                    <button type="submit" class="btn-primary">Create Subject</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- KaTeX JS & Auto-render extension -->
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+    <!-- Marked for Markdown conversion -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- App JS -->
+    <script src="/static/js/dashboard.js"></script>
+    <script>
+        lucide.createIcons();
+    </script>
+</body>
+</html>

@@ -1,0 +1,1 @@
+"""CampusAI Core Package."""
