@@ -72,7 +72,7 @@ class AdminCog(commands.Cog, name="Admin"):
 
         embed.add_field(
             name="Core Services",
-            value=f"• Ollama (`Spark-X2.5-4B`): {ollama_status}\n• Qdrant Vector DB: {qdrant_status}",
+            value=f"• Ollama (`{config.ollama.llm_model}`): {ollama_status}\n• Qdrant Vector DB: {qdrant_status}",
             inline=True
         )
 

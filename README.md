@@ -4,7 +4,7 @@ An offline-capable, privacy-preserving academic study companion for college stud
 - **Discord Bot**: Intent-routed study assistant with multi-channel subject bindings, cross-encoder reranking, LaTeX math answers, and source citations.
 - **Impeccable Web Dashboard**: Deep Slate / Obsidian dark mode dashboard (`#090D16` / `#0F172A`) for PDF document ingestion, live SSE stepper (`pdf_split` ➔ `layout` ➔ `ocr` ➔ `markdown` ➔ `embed` ➔ `indexed`), and a split-pane Document & Formula Inspection Studio.
 - **Formula-Preserving OCR Pipeline**: `pp-doclayoutV3` layout detection, `glm-ocr` formula and text extraction, and math-preserving markdown chunking.
-- **Local Model Stack**: Ollama (`Spark-X2.5-4B`, `Arch-Router-1.5B`, `bge-m3`), Qdrant Vector Database, and `bge-reranker-v2-m3`.
+- **Local Model Stack**: Ollama (`Spark-X2.5-4b-Q8_0`, `Arch-Router`, `bge-m3`), Qdrant Vector Database, and `bge-reranker-v2-m3`.
 
 ---
 
@@ -14,10 +14,10 @@ An offline-capable, privacy-preserving academic study companion for college stud
 Discord Channel (#calculus-1)
        │
        ▼
-Arch-Router-1.5B (Intent Classification)
-       ├── DIRECT  ───────────────► Spark-X2.5-4B ──► Discord Reply
+Arch-Router (Intent Classification)
+       ├── DIRECT  ───────────────► Spark-X2.5-4b-Q8_0 ──► Discord Reply
        ├── RAG     ─► Qdrant (bge-m3) ─┐
-       ├── WEB     ─► Web Search (DDG) ┼─► bge-reranker-v2-m3 (Top 4-5) ─► Spark-X2.5-4B
+       ├── WEB     ─► Web Search (DDG) ┼─► bge-reranker-v2-m3 (Top 4-5) ─► Spark-X2.5-4b-Q8_0
        └── HYBRID  ─► Qdrant + Web   ──┘
 ```
 

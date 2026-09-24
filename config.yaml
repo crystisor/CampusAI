@@ -5,8 +5,8 @@ discord:
 
 ollama:
   base_url: "http://localhost:11434"
-  llm_model: "Spark-X2.5-4B"
-  router_model: "Arch-Router-1.5B"
+  llm_model: "Spark-X2.5-4b-Q8_0"
+  router_model: "Arch-Router"
   embedding_model: "bge-m3"
   request_timeout: 120.0
 

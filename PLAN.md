@@ -10,8 +10,8 @@ The application deploys a local model stack managed primarily via **Ollama** and
 
 | Role | Model Name | Host / Serving Mechanism | Purpose |
 | :--- | :--- | :--- | :--- |
-| **Brain (LLM)** | `Spark-X2.5-4B` | Ollama (`/api/chat`, `/api/generate`) | Primary reasoning, explanation, and answer synthesis |
-| **Router** | `Arch-Router-1.5B` | Ollama (`/api/generate` with structured prompt) | Classifies query intent: Direct, RAG, Web, or Hybrid |
+| **Brain (LLM)** | `Spark-X2.5-4b-Q8_0` | Ollama (`/api/chat`, `/api/generate`) | Primary reasoning, explanation, and answer synthesis |
+| **Router** | `Arch-Router` | Ollama (`/api/generate` with structured prompt) | Classifies query intent: Direct, RAG, Web, or Hybrid |
 | **Reranker** | `bge-reranker-v2-m3` | Python / Sentence-Transformers (FastAPI / local worker) | Cross-encoder reranking of retrieved context to top 4–5 items |
 | **Embeddings** | `bge-m3` | Ollama (`/api/embeddings`) | 1024-dim dense/hybrid vector embeddings for Qdrant |
 | **Document Layout** | `pp-doclayoutV3` | Python / PaddleOCR / ONNX | Page layout analysis (identifying formula regions, tables, text) |
@@ -45,7 +45,7 @@ Applying **UI/UX Pro Max** design intelligence and **Impeccable** craft principl
 The web UI is structured into three primary functional zones:
 1. **Sidebar Navigation**:
    - Subject directory list with channel binding indicators (e.g. `#calculus-1` bound).
-   - System Health Drawer: Live status cards for Ollama (`Spark-X2.5-4B`, `Arch-Router-1.5B`, `bge-m3`), Qdrant, and GPU VRAM meter (RTX 2060 SUPER 8GB).
+   - System Health Drawer: Live status cards for Ollama (`Spark-X2.5-4b-Q8_0`, `Arch-Router`, `bge-m3`), Qdrant, and GPU VRAM meter (RTX 2060 SUPER 8GB).
 2. **Main Workspace**:
    - **Header Bar**: Current subject title, total documents, total parsed Markdown pages, and vector count.
    - **Upload & Ingestion Zone**: Drag-and-drop area with file type validation (`.pdf`), batch queue, and single-click start.
@@ -68,11 +68,11 @@ flowchart TD
 
     subgraph BotService["Discord Bot Core"]
         Handler[Channel & Context Manager]
-        Router[Arch-Router-1.5B Router]
+        Router[Arch-Router Router]
         Decision{Routing Decision}
         Aggregator[Candidate Context Aggregator]
         RerankerNode[bge-reranker-v2-m3 Reranker]
-        LLMNode[Spark-X2.5-4B Generation]
+        LLMNode[Spark-X2.5-4b-Q8_0 Generation]
     end
 
     subgraph DataRetrieval["Retrieval Sources"]
@@ -132,8 +132,8 @@ Discord bot/
 │   │   │   └── admin.py           # Subject binding & diagnostics
 │   │   └── channel_manager.py     # Channel <-> Subject state manager
 │   ├── core/                      # Model wrappers & AI connectors
-│   │   ├── ollama_client.py       # Spark-X2.5-4B & bge-m3 client
-│   │   ├── router.py              # Arch-Router-1.5B intent classification
+│   │   ├── ollama_client.py       # Spark-X2.5-4b-Q8_0 & bge-m3 client
+│   │   ├── router.py              # Arch-Router intent classification
 │   │   ├── reranker.py            # bge-reranker-v2-m3 scoring & top-5 selection
 │   │   └── search.py              # Web search engine (DuckDuckGo/Tavily)
 │   ├── rag/                       # Vector retrieval & chunking
@@ -177,7 +177,7 @@ Discord bot/
 
 4. **Phase 4: Discord Bot Integration**
    - Implement `bot.py` with multi-channel subject bindings.
-   - Implement study chat cog: Router ➔ (Direct / RAG / Web / Hybrid) ➔ Reranker Top 4-5 ➔ Spark-X2.5-4B ➔ Discord reply.
+   - Implement study chat cog: Router ➔ (Direct / RAG / Web / Hybrid) ➔ Reranker Top 4-5 ➔ Spark-X2.5-4b-Q8_0 ➔ Discord reply.
 
 5. **Phase 5: Verification & End-to-End Testing**
    - Test PDF upload, formula OCR parsing, and Qdrant ingestion.

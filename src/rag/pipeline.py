@@ -21,10 +21,10 @@ If you are comparing course material with web knowledge, clearly state any diffe
 class RAGPipeline:
     """
     End-to-End Orchestrator:
-    1. Intent Classification (Arch-Router-1.5B)
+    1. Intent Classification (Arch-Router)
     2. Retrieval (Qdrant bge-m3 / Web Search)
     3. Cross-Encoder Reranking (bge-reranker-v2-m3 -> Top 4-5)
-    4. Synthesis (Spark-X2.5-4B)
+    4. Synthesis (Spark-X2.5-4b-Q8_0)
     """
 
     def __init__(
@@ -92,7 +92,7 @@ class RAGPipeline:
                 context_blocks.append(f"--- Reference [{idx}] ({c.source}) ---\n{c.text}")
             context_str = "\n\n".join(context_blocks)
 
-        # 5. Build prompt for Spark-X2.5-4B
+        # 5. Build prompt for Spark-X2.5-4b-Q8_0
         system_prompt = SYSTEM_PROMPT_TEMPLATE.format(subject_name=sub_name)
         
         if context_str:
@@ -105,7 +105,7 @@ class RAGPipeline:
         else:
             final_user_prompt = query
 
-        # 6. Generate answer with Spark-X2.5-4B
+        # 6. Generate answer with Spark-X2.5-4b-Q8_0
         response_text = await self.ollama.generate(
             prompt=final_user_prompt,
             model=config.ollama.llm_model,

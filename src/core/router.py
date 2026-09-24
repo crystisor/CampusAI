@@ -24,7 +24,7 @@ Output ONLY the category name: DIRECT, RAG, WEB, or HYBRID. Do not explain.
 """
 
 class IntentRouter:
-    """Classifies user queries into DIRECT, RAG, WEB, or HYBRID using Arch-Router-1.5B."""
+    """Classifies user queries into DIRECT, RAG, WEB, or HYBRID using Arch-Router."""
 
     def __init__(self, ollama_client: Optional[OllamaClient] = None):
         self.client = ollama_client or OllamaClient()

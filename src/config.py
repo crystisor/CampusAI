@@ -16,8 +16,8 @@ class DiscordSettings(BaseModel):
 
 class OllamaSettings(BaseModel):
     base_url: str = Field(default_factory=lambda: os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))
-    llm_model: str = "Spark-X2.5-4B"
-    router_model: str = "Arch-Router-1.5B"
+    llm_model: str = "Spark-X2.5-4b-Q8_0"
+    router_model: str = "Arch-Router"
     embedding_model: str = "bge-m3"
     request_timeout: float = 120.0
 

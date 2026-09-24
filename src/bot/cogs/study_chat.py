@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class StudyChatCog(commands.Cog, name="StudyChat"):
     """
     Handles student questions in subject-bound channels.
-    Routes queries through RAGPipeline (Arch-Router -> RAG/Web -> bge-reranker -> Spark-X2.5-4B).
+    Routes queries through RAGPipeline (Arch-Router -> RAG/Web -> bge-reranker -> Spark-X2.5-4b-Q8_0).
     """
 
     def __init__(self, bot: commands.Bot):
