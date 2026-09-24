@@ -121,7 +121,7 @@ async def list_subjects():
     # Check directories in storage
     if STORAGE_DIR.exists():
         for d in STORAGE_DIR.iterdir():
-            if d.is_dir():
+            if d.is_dir() and not d.name.startswith("."):
                 sub_id = d.name
                 subjects_dict[sub_id] = {
                     "id": sub_id,
@@ -163,8 +163,9 @@ async def list_subjects():
         stats = await qdrant_manager.get_subject_stats(sub_id)
         item["vector_count"] = stats.get("points_count", 0)
 
-    # Return default subject if empty
-    if not subjects_dict:
+    # Return default subject only if first run and uninitialized
+    init_marker = STORAGE_DIR / ".initialized"
+    if not subjects_dict and not init_marker.exists():
         default_id = "calculus_1"
         subjects_dict[default_id] = {
             "id": default_id,
@@ -175,6 +176,7 @@ async def list_subjects():
             "channels": channel_manager.get_channels_for_subject(default_id),
         }
         (STORAGE_DIR / default_id).mkdir(parents=True, exist_ok=True)
+        init_marker.touch()
 
     return list(subjects_dict.values())
 
@@ -189,10 +191,54 @@ async def create_subject(subject_id: str = Form(...), name: Optional[str] = Form
     sub_dir.mkdir(parents=True, exist_ok=True)
     await qdrant_manager.ensure_subject_collection(clean_id)
 
+    # Ensure init marker exists
+    (STORAGE_DIR / ".initialized").touch()
+
     return {
         "id": clean_id,
         "name": name or clean_id.replace("_", " ").title(),
         "status": "created"
+    }
+
+@app.delete("/api/subjects/{subject_id}")
+async def delete_subject(subject_id: str):
+    """Permanently deletes a subject from Qdrant vector database, file storage, and Discord bindings."""
+    clean_id = "".join(c if c.isalnum() else "_" for c in subject_id.lower()).strip("_")
+    if not clean_id:
+        raise HTTPException(status_code=400, detail="Invalid subject ID")
+
+    # Mark as initialized so deleting the last subject does not recreate default
+    (STORAGE_DIR / ".initialized").touch()
+
+    sub_dir = STORAGE_DIR / clean_id
+    exists_in_storage = sub_dir.exists() and sub_dir.is_dir()
+    qdrant_subs = await qdrant_manager.list_all_subjects()
+    exists_in_qdrant = clean_id in qdrant_subs
+
+    if not exists_in_storage and not exists_in_qdrant:
+        raise HTTPException(status_code=404, detail=f"Subject '{clean_id}' not found")
+
+    # 1. Delete from Qdrant vector database
+    qdrant_deleted = await qdrant_manager.delete_subject_collection(clean_id)
+
+    # 2. Delete storage directory and its files
+    storage_deleted = False
+    if exists_in_storage:
+        import shutil
+        shutil.rmtree(sub_dir, ignore_errors=True)
+        storage_deleted = True
+
+    # 3. Unbind Discord channels
+    channels_unbound = channel_manager.unbind_subject(clean_id)
+
+    logger.info(f"Deleted subject '{clean_id}' - Qdrant: {qdrant_deleted}, Storage: {storage_deleted}, Unbound: {channels_unbound}")
+
+    return {
+        "id": clean_id,
+        "status": "deleted",
+        "qdrant_deleted": qdrant_deleted,
+        "storage_deleted": storage_deleted,
+        "channels_unbound": channels_unbound,
     }
 
 @app.get("/api/subjects/{subject_id}/documents")

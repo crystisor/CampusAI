@@ -142,3 +142,19 @@ class QdrantManager:
         except Exception as e:
             logger.error(f"Failed to list Qdrant collections: {e}")
             return []
+
+    async def delete_subject_collection(self, subject_id: str) -> bool:
+        """Deletes the Qdrant collection associated with a subject."""
+        coll_name = self._get_collection_name(subject_id)
+        try:
+            existing = await self.client.get_collections()
+            exists = any(c.name == coll_name for c in existing.collections)
+            if exists:
+                logger.info(f"Deleting Qdrant collection '{coll_name}'...")
+                await self.client.delete_collection(collection_name=coll_name)
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Failed to delete Qdrant collection '{coll_name}': {e}")
+            return False
+

@@ -2,10 +2,12 @@
 // Built to Impeccable & UI/UX Pro Max standards
 
 let currentSubjectId = "calculus_1";
+let currentSubjectName = "Calculus 1";
 let currentDocName = "";
 let currentPageNum = 1;
 let totalPagesNum = 1;
 let isEditing = false;
+let subjectToDelete = null;
 
 document.addEventListener("DOMContentLoaded", () => {
     initApp();
@@ -18,6 +20,29 @@ async function initApp() {
     setupEventListeners();
     // Poll hardware health every 15s
     setInterval(fetchHealth, 15000);
+}
+
+// TOAST NOTIFICATIONS
+function showToast(message, type = "success") {
+    const container = document.getElementById("toastContainer");
+    if (!container) return;
+
+    const toast = document.createElement("div");
+    toast.className = `toast ${type}`;
+    const iconName = type === "success" ? "check-circle-2" : "alert-triangle";
+    toast.innerHTML = `
+        <i data-lucide="${iconName}"></i>
+        <span>${message}</span>
+    `;
+    container.appendChild(toast);
+    lucide.createIcons();
+
+    setTimeout(() => {
+        toast.style.transition = "opacity 0.3s ease, transform 0.3s ease";
+        toast.style.opacity = "0";
+        toast.style.transform = "translateY(10px)";
+        setTimeout(() => toast.remove(), 300);
+    }, 4000);
 }
 
 // 1. HARDWARE HEALTH & STATUS
@@ -62,10 +87,24 @@ async function loadSubjects() {
         const listEl = document.getElementById("subjectList");
         listEl.innerHTML = "";
 
-        if (subjects.length === 0) {
-            listEl.innerHTML = '<div class="skeleton-item">No subjects yet.</div>';
+        const btnDeleteCurrent = document.getElementById("btnDeleteCurrentSubject");
+
+        if (!subjects || subjects.length === 0) {
+            listEl.innerHTML = '<div class="skeleton-item">No subjects yet. Click + to add one.</div>';
+            currentSubjectId = "";
+            currentSubjectName = "";
+            document.getElementById("currentSubjectTitle").innerText = "No Subject Selected";
+            if (btnDeleteCurrent) btnDeleteCurrent.style.display = "none";
+            document.getElementById("metricDocs").innerText = 0;
+            document.getElementById("metricPages").innerText = 0;
+            document.getElementById("metricVectors").innerText = 0;
+            document.getElementById("subjectChannelTags").innerHTML = '<span class="channel-tag" style="color: #64748B;"><i data-lucide="hash"></i> None</span>';
+            clearInspectionStudio();
+            lucide.createIcons();
             return;
         }
+
+        if (btnDeleteCurrent) btnDeleteCurrent.style.display = "inline-flex";
 
         let activeFound = false;
         subjects.forEach(sub => {
@@ -78,11 +117,27 @@ async function loadSubjects() {
                 : '';
 
             item.innerHTML = `
-                <span class="subject-item-title">${sub.name}</span>
-                ${channelBadge}
+                <div class="subject-item-main">
+                    <span class="subject-item-title">${sub.name}</span>
+                    ${channelBadge}
+                </div>
+                <div class="subject-item-actions">
+                    <button class="btn-delete-subject" title="Delete subject ${sub.name}">
+                        <i data-lucide="trash-2"></i>
+                    </button>
+                </div>
             `;
 
             item.addEventListener("click", () => switchSubject(sub));
+
+            const delBtn = item.querySelector(".btn-delete-subject");
+            if (delBtn) {
+                delBtn.addEventListener("click", (e) => {
+                    e.stopPropagation();
+                    promptDeleteSubject(sub.id, sub.name);
+                });
+            }
+
             listEl.appendChild(item);
         });
 
@@ -100,10 +155,15 @@ async function loadSubjects() {
 }
 
 function updateSubjectHeader(subject) {
+    currentSubjectId = subject.id;
+    currentSubjectName = subject.name;
     document.getElementById("currentSubjectTitle").innerText = subject.name;
     document.getElementById("metricDocs").innerText = subject.document_count || 0;
     document.getElementById("metricPages").innerText = subject.pages_count || 0;
     document.getElementById("metricVectors").innerText = subject.vector_count || 0;
+
+    const btnDeleteCurrent = document.getElementById("btnDeleteCurrentSubject");
+    if (btnDeleteCurrent) btnDeleteCurrent.style.display = "inline-flex";
 
     const channelTagsEl = document.getElementById("subjectChannelTags");
     if (subject.channels && subject.channels.length > 0) {
@@ -118,8 +178,9 @@ function updateSubjectHeader(subject) {
 
 async function switchSubject(subject) {
     currentSubjectId = subject.id;
+    currentSubjectName = subject.name;
     document.querySelectorAll(".subject-item").forEach(el => el.classList.remove("active"));
-    const activeItem = [...document.querySelectorAll(".subject-item")].find(el => el.textContent.includes(subject.name));
+    const activeItem = [...document.querySelectorAll(".subject-item")].find(el => el.querySelector(".subject-item-title")?.textContent === subject.name);
     if (activeItem) activeItem.classList.add("active");
 
     updateSubjectHeader(subject);
@@ -128,10 +189,24 @@ async function switchSubject(subject) {
     await loadSubjectDocuments();
 }
 
+function promptDeleteSubject(id, name) {
+    subjectToDelete = { id, name };
+    const targetNameEl = document.getElementById("deleteSubjectTargetName");
+    if (targetNameEl) targetNameEl.innerText = `"${name}" (${id})`;
+    const modal = document.getElementById("modalDeleteSubject");
+    if (modal) modal.style.display = "flex";
+    lucide.createIcons();
+}
+
 // 3. DOCUMENTS & STUDIO INSPECTION
 async function loadSubjectDocuments() {
     const docSelect = document.getElementById("docSelect");
     docSelect.innerHTML = '<option value="">Select a document to inspect...</option>';
+
+    if (!currentSubjectId) {
+        clearInspectionStudio();
+        return;
+    }
 
     try {
         const res = await fetch(`/api/subjects/${currentSubjectId}/documents`);
@@ -261,8 +336,12 @@ function setupDropzone() {
 }
 
 async function handleFileUpload(file) {
+    if (!currentSubjectId) {
+        showToast("Please select or create a subject before uploading documents.", "error");
+        return;
+    }
     if (!file.name.toLowerCase().endsWith(".pdf")) {
-        alert("Please upload a PDF file.");
+        showToast("Please upload a valid PDF file.", "error");
         return;
     }
 
@@ -437,6 +516,85 @@ function setupEventListeners() {
         modal.style.display = "none";
     });
 
+    // Delete current subject button in top nav
+    const btnDeleteCurrent = document.getElementById("btnDeleteCurrentSubject");
+    if (btnDeleteCurrent) {
+        btnDeleteCurrent.addEventListener("click", () => {
+            if (currentSubjectId) {
+                promptDeleteSubject(currentSubjectId, currentSubjectName || currentSubjectId);
+            }
+        });
+    }
+
+    // Modal: Delete Subject
+    const modalDelete = document.getElementById("modalDeleteSubject");
+    const btnCloseDelete = document.getElementById("btnCloseDeleteModal");
+    const btnCancelDelete = document.getElementById("btnCancelDeleteModal");
+    const btnConfirmDelete = document.getElementById("btnConfirmDeleteSubject");
+
+    if (btnCloseDelete) {
+        btnCloseDelete.addEventListener("click", () => {
+            if (modalDelete) modalDelete.style.display = "none";
+            subjectToDelete = null;
+        });
+    }
+
+    if (btnCancelDelete) {
+        btnCancelDelete.addEventListener("click", () => {
+            if (modalDelete) modalDelete.style.display = "none";
+            subjectToDelete = null;
+        });
+    }
+
+    if (btnConfirmDelete) {
+        btnConfirmDelete.addEventListener("click", async () => {
+            if (!subjectToDelete) return;
+
+            const { id, name } = subjectToDelete;
+            btnConfirmDelete.disabled = true;
+            const confirmTextEl = document.getElementById("confirmDeleteText");
+            const originalText = confirmTextEl ? confirmTextEl.innerText : "Delete Subject";
+            if (confirmTextEl) confirmTextEl.innerText = "Deleting...";
+
+            try {
+                const res = await fetch(`/api/subjects/${id}`, {
+                    method: "DELETE"
+                });
+
+                if (res.ok) {
+                    if (modalDelete) modalDelete.style.display = "none";
+                    showToast(`Subject "${name}" deleted from database and storage.`, "success");
+                    if (id === currentSubjectId) {
+                        currentSubjectId = "";
+                        currentSubjectName = "";
+                    }
+                    await loadSubjects();
+                } else {
+                    const errData = await res.json().catch(() => ({}));
+                    showToast(`Failed to delete subject: ${errData.detail || res.statusText}`, "error");
+                }
+            } catch (err) {
+                console.error("Delete subject error:", err);
+                showToast(`Network error deleting subject: ${err.message}`, "error");
+            } finally {
+                btnConfirmDelete.disabled = false;
+                if (confirmTextEl) confirmTextEl.innerText = originalText;
+                subjectToDelete = null;
+            }
+        });
+    }
+
+    // Click outside modal backdrop to close
+    window.addEventListener("click", (e) => {
+        if (e.target === modal) {
+            modal.style.display = "none";
+        }
+        if (e.target === modalDelete) {
+            modalDelete.style.display = "none";
+            subjectToDelete = null;
+        }
+    });
+
     document.getElementById("formNewSubject").addEventListener("submit", async (e) => {
         e.preventDefault();
         const id = document.getElementById("inputSubjectId").value;
@@ -454,10 +612,15 @@ function setupEventListeners() {
             if (res.ok) {
                 modal.style.display = "none";
                 document.getElementById("formNewSubject").reset();
+                showToast(`Subject "${name || id}" created successfully.`, "success");
                 await loadSubjects();
+            } else {
+                const errData = await res.json().catch(() => ({}));
+                showToast(`Failed to create subject: ${errData.detail || res.statusText}`, "error");
             }
         } catch (err) {
             console.error("Failed to create subject:", err);
+            showToast(`Network error: ${err.message}`, "error");
         }
     });
 }
