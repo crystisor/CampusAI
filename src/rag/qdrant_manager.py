@@ -92,14 +92,22 @@ class QdrantManager:
             logger.warning(f"Collection '{coll_name}' does not exist.")
             return []
 
-        search_result = await self.client.search(
-            collection_name=coll_name,
-            query_vector=query_vector,
-            limit=limit,
-        )
+        if hasattr(self.client, "query_points"):
+            response = await self.client.query_points(
+                collection_name=coll_name,
+                query=query_vector,
+                limit=limit,
+            )
+            scored_points = response.points
+        else:
+            scored_points = await self.client.search(
+                collection_name=coll_name,
+                query_vector=query_vector,
+                limit=limit,
+            )
 
         candidates: List[RerankerCandidate] = []
-        for scored_point in search_result:
+        for scored_point in scored_points:
             payload = scored_point.payload or {}
             text = payload.get("text", "")
             doc_name = payload.get("document_name", "Unknown Document")
