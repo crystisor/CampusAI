@@ -8,7 +8,7 @@ from src.core.reranker import RerankerCandidate
 
 logger = logging.getLogger(__name__)
 
-VECTOR_SIZE = 1024  # bge-m3 default dimension
+VECTOR_SIZE = config.embeddings.vector_size
 
 class QdrantManager:
     """Manages Qdrant collections, embeddings upserts, and vector retrieval."""
@@ -44,7 +44,7 @@ class QdrantManager:
                     collection_name=coll_name,
                     vectors_config=rest.VectorParams(
                         size=VECTOR_SIZE,
-                        distance=rest.Distance.COSINE
+                        distance=rest.Distance(config.embeddings.distance.capitalize())
                     )
                 )
         except Exception as e:
@@ -165,4 +165,3 @@ class QdrantManager:
         except Exception as e:
             logger.error(f"Failed to delete Qdrant collection '{coll_name}': {e}")
             return False
-

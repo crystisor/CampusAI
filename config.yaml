@@ -8,17 +8,33 @@ ollama:
   llm_model: "Spark-X2.5-4b-Q8_0"
   llm_keep_alive: "-1"         # Keep permanently hot in GPU VRAM
   think: false                 # Get only actual answers without thinking process/drafts
+  llm_temperature: 0.2
+  llm_num_ctx: 4096
+  llm_top_p: 0.9
+  llm_top_k: 40
+  llm_repeat_penalty: 1.05
   router_model: "Arch-Router"
   router_num_gpu: 0            # Offload to CPU (avoids GPU VRAM evictions)
   router_keep_alive: "30m"
+  router_temperature: 0.0
+  router_max_tokens: 10        # Sent to Ollama as num_predict
   embedding_model: "bge-m3"
   embedding_num_gpu: 0         # Offload to CPU (avoids GPU VRAM evictions)
   embedding_keep_alive: "30m"
   request_timeout: 120.0
 
+embeddings:
+  vector_size: 1024
+  distance: cosine
+  batch_size: 10
+
 reranker:
   model_name: "BAAI/bge-reranker-v2-m3"
   top_k: 5
+  max_length: 768
+  initial_qdrant_candidates: 15
+  initial_web_candidates: 8
+  score_threshold: 0.0        # Minimum raw reranker score, inclusive
   device: "cpu"
 qdrant:
   host: "localhost"
@@ -30,14 +46,16 @@ qdrant:
 search:
   provider: "duckduckgo" # "duckduckgo" or "tavily"
   tavily_api_key: "${TAVILY_API_KEY}"
-  max_results: 5
+  max_results: 8
 
 ingestion:
   layout_model: "pp-doclayoutV3"
   ocr_model: "glm-ocr"
   storage_dir: "storage/subjects"
-  chunk_size: 600
-  chunk_overlap: 100
+  dpi: 200
+  chunk_size: 900             # Target characters (within requested 800-1000 range)
+  chunk_overlap: 150
+  math_density_threshold: 0.35
 
 web:
   host: "127.0.0.1"

@@ -3,6 +3,7 @@ import logging
 from typing import List, Dict, Any, Optional
 from PIL import Image
 from src.ingestion.layout_engine import LayoutBlock
+from src.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +105,7 @@ class GLMOCREngine:
             char_count = len(stripped)
             math_count = sum(1 for c in stripped if c in math_symbols or c.isdigit())
             
-            if char_count > 4 and (math_count / char_count) > 0.45 and not stripped.startswith("#"):
+            if char_count > 4 and (math_count / char_count) > config.ingestion.math_density_threshold and not stripped.startswith("#"):
                 # Treat as standalone math formula
                 if not stripped.startswith("$$"):
                     processed_lines.append(f"$$\n{stripped}\n$$")

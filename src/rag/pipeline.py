@@ -72,7 +72,9 @@ class RAGPipeline:
                     keep_alive=config.ollama.embedding_keep_alive,
                 )
                 if query_vector:
-                    course_candidates = await self.qdrant.search(subject_id, query_vector, limit=8)
+                    course_candidates = await self.qdrant.search(
+                        subject_id, query_vector, limit=config.reranker.initial_qdrant_candidates
+                    )
                     candidates.extend(course_candidates)
             except Exception as e:
                 logger.error(f"RAG retrieval error: {e}")
@@ -80,7 +82,9 @@ class RAGPipeline:
         if decision in [RoutingDecision.WEB, RoutingDecision.HYBRID]:
             # Retrieve from Web Search
             try:
-                web_candidates = await self.search.search(query, max_results=5)
+                web_candidates = await self.search.search(
+                    query, max_results=config.reranker.initial_web_candidates
+                )
                 candidates.extend(web_candidates)
             except Exception as e:
                 logger.error(f"Web search retrieval error: {e}")
@@ -89,7 +93,7 @@ class RAGPipeline:
         top_candidates: List[RerankerCandidate] = []
         if candidates:
             # Explicitly select top 4-5 as specified
-            top_candidates = self.reranker.rerank(query, candidates, top_k=5)
+            top_candidates = self.reranker.rerank(query, candidates, top_k=config.reranker.top_k)
             logger.info(f"Reranked {len(candidates)} candidates down to top {len(top_candidates)}")
 
         # 4. Construct context block
@@ -118,7 +122,6 @@ class RAGPipeline:
             prompt=final_user_prompt,
             model=config.ollama.llm_model,
             system=system_prompt,
-            options={"temperature": 0.3},
             keep_alive=config.ollama.llm_keep_alive,
             think=False,
         )

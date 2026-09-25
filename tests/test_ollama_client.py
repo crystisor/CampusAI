@@ -22,6 +22,13 @@ async def test_ollama_generate_options_and_keep_alive():
         assert payload["model"] == config.ollama.llm_model
         assert payload["keep_alive"] == -1
         assert payload["think"] is False
+        assert payload["options"] == {
+            "temperature": 0.2,
+            "num_ctx": 4096,
+            "top_p": 0.9,
+            "top_k": 40,
+            "repeat_penalty": 1.05,
+        }
 
 @pytest.mark.asyncio
 async def test_ollama_router_defaults_to_cpu():
@@ -40,6 +47,9 @@ async def test_ollama_router_defaults_to_cpu():
         payload = kwargs.get("json", {})
         assert payload["model"] == config.ollama.router_model
         assert payload["options"]["num_gpu"] == 0
+        assert payload["options"]["temperature"] == 0.0
+        assert payload["options"]["num_predict"] == 10
+        assert "max_tokens" not in payload["options"]
         assert payload["keep_alive"] == config.ollama.router_keep_alive
 
 @pytest.mark.asyncio

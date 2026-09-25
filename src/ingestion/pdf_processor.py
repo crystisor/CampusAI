@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from PIL import Image, ImageDraw, ImageFont
 import pypdf
+from src.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +19,8 @@ class PDFProcessor:
     Handles PDF splitting, text extraction, and page image generation for visual preview and OCR.
     """
 
-    def __init__(self, dpi: int = 150):
-        self.dpi = dpi
+    def __init__(self, dpi: Optional[int] = None):
+        self.dpi = config.ingestion.dpi if dpi is None else dpi
 
     def extract_pages(self, pdf_path: Path, output_image_dir: Optional[Path] = None) -> List[PDFPageData]:
         """

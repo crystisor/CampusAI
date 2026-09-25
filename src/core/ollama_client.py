@@ -80,6 +80,30 @@ class OllamaClient:
         except Exception:
             return False
 
+    def _generation_options(self, model: str, options: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Apply model defaults and translate token limits for Ollama's native API."""
+        defaults: Dict[str, Any] = {}
+        if model == config.ollama.llm_model:
+            defaults = {
+                "temperature": config.ollama.llm_temperature,
+                "num_ctx": config.ollama.llm_num_ctx,
+                "top_p": config.ollama.llm_top_p,
+                "top_k": config.ollama.llm_top_k,
+                "repeat_penalty": config.ollama.llm_repeat_penalty,
+            }
+        elif model == config.ollama.router_model:
+            defaults = {
+                "temperature": config.ollama.router_temperature,
+                "num_predict": config.ollama.router_max_tokens,
+                "num_gpu": config.ollama.router_num_gpu,
+            }
+        overrides = dict(options or {})
+        if "max_tokens" in overrides:
+            max_tokens = overrides.pop("max_tokens")
+            overrides.setdefault("num_predict", max_tokens)
+        defaults.update(overrides)
+        return defaults
+
     async def list_models(self) -> List[str]:
         """List all models currently installed in Ollama."""
         try:
@@ -111,9 +135,7 @@ class OllamaClient:
             elif target_model == config.ollama.router_model:
                 keep_alive = config.ollama.router_keep_alive
 
-        merged_options = dict(options or {})
-        if target_model == config.ollama.router_model and "num_gpu" not in merged_options:
-            merged_options["num_gpu"] = config.ollama.router_num_gpu
+        merged_options = self._generation_options(target_model, options)
 
         payload: Dict[str, Any] = {
             "model": target_model,
@@ -162,9 +184,7 @@ class OllamaClient:
             elif target_model == config.ollama.router_model:
                 keep_alive = config.ollama.router_keep_alive
 
-        merged_options = dict(options or {})
-        if target_model == config.ollama.router_model and "num_gpu" not in merged_options:
-            merged_options["num_gpu"] = config.ollama.router_num_gpu
+        merged_options = self._generation_options(target_model, options)
 
         payload: Dict[str, Any] = {
             "model": target_model,

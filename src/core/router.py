@@ -46,8 +46,8 @@ class IntentRouter:
                 model=self.model_name,
                 system=ROUTER_SYSTEM_PROMPT,
                 options={
-                    "temperature": 0.0,
-                    "max_tokens": 10,
+                    "temperature": config.ollama.router_temperature,
+                    "num_predict": config.ollama.router_max_tokens,
                     "num_gpu": config.ollama.router_num_gpu,
                 },
                 keep_alive=config.ollama.router_keep_alive,
