@@ -5,6 +5,7 @@ from typing import Optional
 
 from src.bot.channel_manager import channel_manager
 from src.rag.pipeline import RAGPipeline
+from src.core.ollama_client import clean_llm_response
 from src.config import config
 
 logger = logging.getLogger(__name__)
@@ -48,7 +49,8 @@ class StudyChatCog(commands.Cog, name="StudyChat"):
                     subject_name=subject_name,
                 )
 
-                answer = result.get("answer", "I could not generate an explanation at this time.")
+                raw_answer = result.get("answer", "I could not generate an explanation at this time.")
+                answer = clean_llm_response(raw_answer)
                 decision = result.get("decision", "DIRECT")
                 top_contexts = result.get("top_contexts", [])
 

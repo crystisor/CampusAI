@@ -51,6 +51,17 @@ class StudyBot(commands.Bot):
         activity = discord.CustomActivity(name=config.discord.status_message)
         await self.change_presence(activity=activity)
         logger.info("CampusAI Study Bot is online and listening!")
+        # Trigger asynchronous background model warmup
+        asyncio.create_task(self.warmup_models())
+
+    async def warmup_models(self):
+        try:
+            from src.core.ollama_client import OllamaClient
+            client = OllamaClient()
+            if await client.is_available():
+                await client.warm_models()
+        except Exception as e:
+            logger.warning(f"Background model pre-warm error: {e}")
 
 async def main():
     token = config.discord.token

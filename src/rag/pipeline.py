@@ -1,6 +1,6 @@
 import logging
 from typing import List, Dict, Any, Optional, Tuple
-from src.core.ollama_client import OllamaClient
+from src.core.ollama_client import OllamaClient, clean_llm_response
 from src.core.router import IntentRouter, RoutingDecision
 from src.core.reranker import Reranker, RerankerCandidate
 from src.core.search import WebSearchEngine
@@ -9,7 +9,7 @@ from src.config import config
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT_TEMPLATE = """You are CampusAI, an elite academic and study assistant for college students.
+SYSTEM_PROMPT_TEMPLATE = r"""You are CampusAI, an elite academic and study assistant for college students.
 Subject context: {subject_name}
 
 Your goal is to answer the student's question with utmost mathematical precision, clear logical structuring, and verified citations.
@@ -18,6 +18,7 @@ Discord does not render LaTeX. Do NOT use LaTeX tags or commands (no $$, $, \fra
 Instead, write all formulas in clean, human-readable plain text using Unicode math symbols
 (such as s², σ², μ, x, √, Σ, 1/N, etc.) or single-line code blocks (`s = √(s²)`).
 If you are comparing course material with web knowledge, clearly state any differences or nuances between academic theory and real-world implementations.
+Provide only the direct, final answer to the student. Do NOT output internal thoughts, reasoning chains, scratchpads, drafts, or thinking tags (<think>...</think>).
 """
 
 class RAGPipeline:
@@ -64,7 +65,12 @@ class RAGPipeline:
         if decision in [RoutingDecision.RAG, RoutingDecision.HYBRID]:
             # Retrieve from Qdrant
             try:
-                query_vector = await self.ollama.get_embedding(query, model=config.ollama.embedding_model)
+                query_vector = await self.ollama.get_embedding(
+                    query,
+                    model=config.ollama.embedding_model,
+                    num_gpu=config.ollama.embedding_num_gpu,
+                    keep_alive=config.ollama.embedding_keep_alive,
+                )
                 if query_vector:
                     course_candidates = await self.qdrant.search(subject_id, query_vector, limit=8)
                     candidates.extend(course_candidates)
@@ -107,16 +113,19 @@ class RAGPipeline:
         else:
             final_user_prompt = query
 
-        # 6. Generate answer with Spark-X2.5-4b-Q8_0
+        # 6. Generate answer with Spark-X2.5-4b-Q8_0 (think=False ensures no internal thinking tokens)
         response_text = await self.ollama.generate(
             prompt=final_user_prompt,
             model=config.ollama.llm_model,
             system=system_prompt,
-            options={"temperature": 0.3}
+            options={"temperature": 0.3},
+            keep_alive=config.ollama.llm_keep_alive,
+            think=False,
         )
+        final_answer = clean_llm_response(response_text)
 
         return {
-            "answer": response_text,
+            "answer": final_answer,
             "decision": decision.value,
             "route_reason": route_reason,
             "top_contexts": [c.to_dict() for c in top_candidates],

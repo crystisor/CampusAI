@@ -45,7 +45,13 @@ class IntentRouter:
                 prompt=formatted_prompt,
                 model=self.model_name,
                 system=ROUTER_SYSTEM_PROMPT,
-                options={"temperature": 0.0, "max_tokens": 10},
+                options={
+                    "temperature": 0.0,
+                    "max_tokens": 10,
+                    "num_gpu": config.ollama.router_num_gpu,
+                },
+                keep_alive=config.ollama.router_keep_alive,
+                think=False,
             )
             cleaned = raw_response.strip().upper()
             

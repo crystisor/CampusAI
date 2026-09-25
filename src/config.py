@@ -17,8 +17,14 @@ class DiscordSettings(BaseModel):
 class OllamaSettings(BaseModel):
     base_url: str = Field(default_factory=lambda: os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))
     llm_model: str = "Spark-X2.5-4b-Q8_0"
+    llm_keep_alive: str = "-1"  # Permanently keep LLM hot in GPU VRAM
+    think: bool = False         # Explicitly disable model thinking/drafts to output only final answer
     router_model: str = "Arch-Router"
+    router_num_gpu: int = 0     # Offload to CPU
+    router_keep_alive: str = "30m"
     embedding_model: str = "bge-m3"
+    embedding_num_gpu: int = 0  # Offload to CPU
+    embedding_keep_alive: str = "30m"
     request_timeout: float = 120.0
 
 class RerankerSettings(BaseModel):

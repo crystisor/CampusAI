@@ -6,7 +6,7 @@ from typing import Optional
 
 from src.bot.channel_manager import channel_manager
 from src.rag.qdrant_manager import QdrantManager
-from src.core.ollama_client import OllamaClient
+from src.core.ollama_client import OllamaClient, clean_llm_response
 from src.rag.pipeline import RAGPipeline
 from src.config import config
 
@@ -122,7 +122,8 @@ class AdminCog(commands.Cog, name="Admin"):
                 subject_id=target_sub,
                 subject_name=target_sub.replace("_", " ").title()
             )
-            answer = res.get("answer", "")
+            raw_answer = res.get("answer", "")
+            answer = clean_llm_response(raw_answer)
             decision = res.get("decision", "DIRECT")
 
             reply = f"**[{target_sub.upper()}]** `Intent: {decision}`\n\n{answer}"
