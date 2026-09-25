@@ -378,25 +378,6 @@ This provides greater control over:
 
 ---
 
-# 🛣️ Roadmap
-
-Potential future improvements include:
-
-* [ ] Conversation memory
-* [ ] Per-user conversation history
-* [ ] Improved document chunking
-* [ ] Multi-modal question answering
-* [ ] Improved OCR for mathematical notation
-* [ ] Automatic course-material synchronization
-* [ ] Advanced RAG evaluation
-* [ ] Retrieval and answer quality metrics
-* [ ] GPU utilization monitoring
-* [ ] Dockerized application services
-* [ ] Authentication for the management dashboard
-* [ ] Multi-server / multi-university support
-
----
-
 # 📄 License
 
 This project is currently under development.
