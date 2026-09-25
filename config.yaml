@@ -6,8 +6,14 @@ discord:
 ollama:
   base_url: "http://localhost:11434"
   llm_model: "Spark-X2.5-4b-Q8_0"
+  llm_keep_alive: "-1"         # Keep permanently hot in GPU VRAM
+  think: false                 # Get only actual answers without thinking process/drafts
   router_model: "Arch-Router"
+  router_num_gpu: 0            # Offload to CPU (avoids GPU VRAM evictions)
+  router_keep_alive: "30m"
   embedding_model: "bge-m3"
+  embedding_num_gpu: 0         # Offload to CPU (avoids GPU VRAM evictions)
+  embedding_keep_alive: "30m"
   request_timeout: 120.0
 
 reranker:

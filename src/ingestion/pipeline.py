@@ -132,21 +132,28 @@ class IngestionPipeline:
         await emit("markdown", 80, f"Generated {len(all_chunks)} formula-preserved chunks.")
 
         # 6. Embeddings (bge-m3)
-        await emit("embed", 85, f"Generating bge-m3 embeddings for {len(all_chunks)} chunks...")
+        await emit("embed", 85, f"Generating bge-m3 embeddings for {len(all_chunks)} chunks on CPU...")
         vectors: List[List[float]] = []
         batch_size = 10
         for i in range(0, len(all_chunks), batch_size):
             batch = all_chunks[i : i + batch_size]
-            for c in batch:
-                try:
-                    vec = await self.ollama.get_embedding(c["text"], model=config.ollama.embedding_model)
-                    if not vec:
-                        # Fallback zero vector if embedding service is cold or dry-run
-                        vec = [0.0] * 1024
-                    vectors.append(vec)
-                except Exception as e:
-                    logger.warning(f"Embedding failure for chunk {c['chunk_id']}: {e}")
-                    vectors.append([0.0] * 1024)
+            batch_texts = [c["text"] for c in batch]
+            try:
+                batch_vecs = await self.ollama.get_embeddings(
+                    batch_texts,
+                    model=config.ollama.embedding_model,
+                    num_gpu=config.ollama.embedding_num_gpu,
+                    keep_alive=config.ollama.embedding_keep_alive,
+                )
+                if len(batch_vecs) == len(batch):
+                    vectors.extend(batch_vecs)
+                else:
+                    for _ in range(len(batch) - len(batch_vecs)):
+                        batch_vecs.append([0.0] * 1024)
+                    vectors.extend(batch_vecs)
+            except Exception as e:
+                logger.warning(f"Batch embedding failure for slice {i}:{i+batch_size}: {e}")
+                vectors.extend([[0.0] * 1024] * len(batch))
 
         await emit("embed", 95, f"All {len(vectors)} vectors generated.")
 

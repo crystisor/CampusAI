@@ -13,6 +13,10 @@ async def test_router_fallback():
 
     assert decision == RoutingDecision.RAG
     assert "lecture" in reason.lower()
+    # Verify num_gpu=0 was passed in options
+    mock_ollama.generate.assert_called_once()
+    _, kwargs = mock_ollama.generate.call_args
+    assert kwargs.get("options", {}).get("num_gpu") == 0
 
 @pytest.mark.asyncio
 async def test_router_heuristic_fallback():
