@@ -56,20 +56,46 @@ htmlcov/
 .hypothesis/
 .mypy_cache/
 .ruff_cache/
+.pyre/
+.pytype/
+coverage.xml
+coverage.json
+junit.xml
+nosetests.xml
 
 # ==============================================================================
 # Application Data & Vector Storage
 # ==============================================================================
-data/
-storage/subjects/*
-!storage/subjects/.gitkeep
+/data/
+/storage/subjects/*
+!/storage/subjects/.gitkeep
+/storage/channel_bindings.json
 *.sqlite3
+*.sqlite
+*.sqlite3-*
+*.sqlite-*
 *.db
+*.db-journal
+*.db-wal
+*.db-shm
 
 # ==============================================================================
 # Graphify Knowledge Graph Artifacts
 # ==============================================================================
 graphify-out/
+
+# Local tool state (shared skills and project configuration remain versioned)
+/.impeccable/config.local.json
+/.serena/cache/
+/.serena/project.local.yml
+/.codex/config.local.toml
+/.codex/.session
+
+# Downloaded model weights and local package caches
+*.gguf
+*.safetensors
+/.cache/
+node_modules/
 
 # ==============================================================================
 # Logs & Temporary Files
@@ -78,6 +104,9 @@ graphify-out/
 logs/
 *.tmp
 *.bak
+*.temp
+/tmp/
+/temp/
 
 # ==============================================================================
 # IDEs & Editors
@@ -98,6 +127,10 @@ logs/
 # Operating System
 # ==============================================================================
 .DS_Store
+._*
 Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+*.stackdump
 desktop.ini
 $RECYCLE.BIN/
