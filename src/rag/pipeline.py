@@ -117,15 +117,17 @@ class RAGPipeline:
         else:
             final_user_prompt = query
 
-        # 6. Generate answer with Spark-X2.5-4b-Q8_0 (think=False ensures no internal thinking tokens)
+        # 6. Use configured thinking; filter internal reasoning before returning the answer.
         response_text = await self.ollama.generate(
             prompt=final_user_prompt,
             model=config.ollama.llm_model,
             system=system_prompt,
             keep_alive=config.ollama.llm_keep_alive,
-            think=False,
+            think=config.ollama.think,
         )
         final_answer = clean_llm_response(response_text)
+        if not final_answer:
+            final_answer = "I couldn't finish an answer. Please try again with a shorter or more specific question."
 
         return {
             "answer": final_answer,
