@@ -9,10 +9,12 @@ from src.config import config
 logger = logging.getLogger(__name__)
 
 class PDFPageData:
-    def __init__(self, page_number: int, text: str, image_path: Optional[Path] = None):
+    def __init__(self, page_number: int, text: str, image_path: Optional[Path] = None,
+                 image_is_rendered: bool = False):
         self.page_number = page_number
         self.text = text
         self.image_path = image_path
+        self.image_is_rendered = image_is_rendered
 
 class PDFProcessor:
     """
@@ -49,7 +51,11 @@ class PDFProcessor:
 
         for idx, page in enumerate(reader.pages):
             page_num = idx + 1
-            text = page.extract_text() or ""
+            try:
+                text = page.extract_text() or ""
+            except Exception as exc:
+                logger.warning("Text extraction failed on page %s; attempting OCR: %s", page_num, exc)
+                text = ""
             
             image_path: Optional[Path] = None
             if output_image_dir:
@@ -64,7 +70,10 @@ class PDFProcessor:
                     img.save(img_file, "PNG")
                     image_path = img_file
 
-            pages_data.append(PDFPageData(page_number=page_num, text=text, image_path=image_path))
+            pages_data.append(PDFPageData(
+                page_number=page_num, text=text, image_path=image_path,
+                image_is_rendered=pdf_images[idx] is not None and image_path is not None,
+            ))
 
         return pages_data
 

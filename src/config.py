@@ -63,6 +63,9 @@ class SearchSettings(BaseModel):
 class IngestionSettings(BaseModel):
     layout_model: str = "pp-doclayoutV3"
     ocr_model: str = "glm-ocr"
+    ocr_min_text_chars: int = Field(default=80, ge=0)
+    ocr_formula_pages: bool = False
+    ocr_keep_alive: str = "1m"
     storage_dir: Path = BASE_DIR / "storage" / "subjects"
     dpi: int = 200
     chunk_size: int = 900

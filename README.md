@@ -302,6 +302,29 @@ This allows the bot to answer questions using the specific course material assoc
 
 # 🧪 Running the Test Suite
 
+PDF ingestion uses the PDF text layer by default. Pages with fewer than 80
+non-whitespace characters are sent to the configured OCR model through
+Ollama. Keep Ollama running during ingestion.
+Actual page rendering requires Poppler (`pdfinfo` and `pdftoppm` on PATH);
+generated text previews are never used as OCR input.
+
+The `ingestion` settings in `config.yaml` control this behavior:
+
+* `ocr_min_text_chars: 80`: minimum usable text length before OCR is requested.
+* `ocr_formula_pages: false`: enable to also OCR pages containing math-heavy
+  lines. This is a heuristic; it cannot detect every missing image-based formula.
+* `ocr_keep_alive: "1m"`: keep the OCR model loaded for one minute after a request.
+
+OCR output is saved directly as page Markdown and then chunked and embedded.
+If OCR fails, available PDF text is retained with a progress warning. If a page
+has no extracted text and OCR fails or returns empty output, ingestion stops
+before indexing. This can also happen for a completely blank page. Results
+include `ocr_pages` and `warnings`. Re-upload previously parsed PDFs to apply OCR;
+existing documents are not automatically reprocessed.
+
+OCR requests use an 8K context and a 4K output limit. Truncated responses are
+rejected rather than indexed as complete text.
+
 Run the complete test suite with:
 
 ```bash
@@ -380,11 +403,4 @@ This provides greater control over:
 
 # 📄 License
 
-This project is currently under development.
-
-License information will be added in a future release.
-
-```
-
-This version is ready to use as the repository's `README.md`. I also corrected the Markdown escaping, the `uvicorn` command formatting, the architecture diagram, and the command examples so GitHub renders them cleanly.
-```
+This project is licensed under the [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0).

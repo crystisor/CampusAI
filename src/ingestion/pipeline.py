@@ -3,7 +3,6 @@ import asyncio
 import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable, Awaitable
-from PIL import Image
 
 from src.config import config
 from src.ingestion.pdf_processor import PDFProcessor, PDFPageData
@@ -21,7 +20,7 @@ ProgressCallback = Callable[[Dict[str, Any]], Awaitable[None]]
 class IngestionPipeline:
     """
     End-to-end PDF ingestion pipeline:
-    [PDF Split] ➔ [Layout (pp-doclayoutV3)] ➔ [OCR (glm-ocr)] ➔ [Markdown (.md)] ➔ [Embed (bge-m3)] ➔ [Indexed]
+    PDF text extraction -> selective GLM-OCR -> Markdown -> embeddings -> index.
     """
 
     def __init__(
@@ -35,13 +34,13 @@ class IngestionPipeline:
     ):
         self.pdf_processor = pdf_processor or PDFProcessor()
         self.layout_engine = layout_engine or DocumentLayoutEngine()
-        self.ocr_engine = ocr_engine or GLMOCREngine()
+        self.ollama = ollama_client or OllamaClient()
+        self.ocr_engine = ocr_engine or GLMOCREngine(ollama_client=self.ollama)
         self.chunker = chunker or MarkdownFormulaChunker(
             chunk_size=config.ingestion.chunk_size,
             chunk_overlap=config.ingestion.chunk_overlap
         )
         self.qdrant = qdrant_manager or QdrantManager()
-        self.ollama = ollama_client or OllamaClient()
 
     async def ingest_pdf(
         self,
@@ -78,29 +77,37 @@ class IngestionPipeline:
 
         # 1. PDF Split & Image Generation
         await emit("pdf_split", 15, f"Splitting PDF and rendering page previews...")
-        pages_data: List[PDFPageData] = self.pdf_processor.extract_pages(pdf_path, output_image_dir=images_dir)
+        pages_data: List[PDFPageData] = await asyncio.to_thread(
+            self.pdf_processor.extract_pages, pdf_path, output_image_dir=images_dir,
+        )
         num_pages = len(pages_data)
         await emit("pdf_split", 25, f"Extracted {num_pages} pages.")
 
-        # 2 & 3. Layout Detection & OCR / Formula Extraction
-        await emit("layout", 35, f"Analyzing layout blocks across {num_pages} pages...")
+        # Select OCR per page; placeholder layout regions are not OCR evidence.
+        await emit("layout", 35, f"Checking text extraction across {num_pages} pages...")
         all_page_markdowns: List[str] = []
+        ocr_pages: List[int] = []
+        warnings: List[str] = []
 
         for p in pages_data:
-            # Layout Analysis
-            if p.image_path and p.image_path.exists():
-                try:
-                    img = Image.open(p.image_path)
-                    blocks = self.layout_engine.detect_layout(img)
-                except Exception:
-                    blocks = []
-            else:
-                blocks = []
-
-            # OCR / Formula Processing
+            reason = self.ocr_engine.ocr_reason(p.text)
             processed_page_md = self.ocr_engine.process_page_text(p.text)
-            
-            # If formulas were detected in layout, ensure formula markup is present
+            if reason:
+                await emit("ocr", 35 + int(25 * (p.page_number - 1) / max(num_pages, 1)),
+                           f"Reading page {p.page_number} with GLM-OCR: {reason}.")
+                try:
+                    # Preserve OCR Markdown/LaTeX without applying text-layer regexes.
+                    processed_page_md = await self.ocr_engine.recognize_page(p)
+                    ocr_pages.append(p.page_number)
+                except Exception as exc:
+                    warning = f"Page {p.page_number}: OCR failed ({exc})."
+                    if not p.text.strip():
+                        raise RuntimeError(warning + " No extracted text is available; ingestion stopped.") from exc
+                    warning += " Kept the PDF text layer."
+                    warnings.append(warning)
+                    logger.warning(warning)
+                    await emit("ocr", 35, warning)
+
             page_md_content = f"# {doc_name} — Page {p.page_number}\n\n{processed_page_md}\n"
             
             # Save individual page .md
@@ -110,7 +117,7 @@ class IngestionPipeline:
 
             all_page_markdowns.append(page_md_content)
 
-        await emit("ocr", 60, f"Completed formula & text recognition for {num_pages} pages.")
+        await emit("ocr", 60, f"Processed {num_pages} pages; {len(ocr_pages)} used GLM-OCR, {len(warnings)} warnings.")
 
         # 4. Save combined document markdown
         await emit("markdown", 70, f"Compiling structured Markdown...")
@@ -172,4 +179,6 @@ class IngestionPipeline:
             "pages_count": num_pages,
             "chunks_count": len(all_chunks),
             "markdown_path": str(combined_doc_path),
+            "ocr_pages": ocr_pages,
+            "warnings": warnings,
         }

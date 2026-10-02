@@ -1,82 +1,39 @@
 import re
-import logging
-from typing import List, Dict, Any, Optional
-from PIL import Image
-from src.ingestion.layout_engine import LayoutBlock
-from src.config import config
+from typing import Optional
 
-logger = logging.getLogger(__name__)
+from src.config import config
+from src.core.ollama_client import OllamaClient
+from src.ingestion.pdf_processor import PDFPageData
+
 
 class GLMOCREngine:
-    """
-    High-accuracy formula and text recognition engine (glm-ocr).
-    Extracts structured Markdown with LaTeX math formulas ($inline$ and $$display$$).
-    Includes robust fallback for standard text extraction if local weights are loading or unavailable.
-    """
+    """Select pages for OCR and recognize their actual rendered image via Ollama."""
 
-    def __init__(self, model_name: str = "glm-ocr"):
-        self.model_name = model_name
-        self._initialized = False
-        self._model = None
-        self._tokenizer = None
+    def __init__(self, model_name: Optional[str] = None,
+                 ollama_client: Optional[OllamaClient] = None):
+        self.model_name = model_name or config.ingestion.ocr_model
+        self.ollama = ollama_client or OllamaClient()
 
-    def _lazy_init(self):
-        if self._initialized:
-            return
-        
-        try:
-            # Check for transformers / glm-ocr local model checkpoint
-            import torch
-            from transformers import AutoModelForCausalLM, AutoTokenizer
-            logger.info(f"Checking for {self.model_name} model checkpoint...")
-            # We defer loading heavy weights unless explicitly configured
-            self._initialized = True
-        except Exception as e:
-            logger.info(f"{self.model_name} initialized in fast extraction mode: {e}")
-            self._initialized = True
+    def ocr_reason(self, text: str) -> Optional[str]:
+        if not text.strip() or len("".join(text.split())) < config.ingestion.ocr_min_text_chars:
+            return "little or no extracted text"
+        if config.ingestion.ocr_formula_pages:
+            for line in text.splitlines():
+                chars = "".join(line.split())
+                # Digits alone (dates, page numbers) do not imply a formula.
+                if len(chars) > 4 and any(c in "=+^_∑∫√≤≥" for c in chars):
+                    density = sum(c.isdigit() or c in "=+-*/^_{}()<>∑∫√≤≥" for c in chars) / len(chars)
+                    if density > config.ingestion.math_density_threshold:
+                        return "formula-heavy text (optional heuristic)"
+        return None
 
-    def extract_formula(self, image_crop: Image.Image) -> str:
-        """
-        Specialized formula recognition for mathematical expressions.
-        Returns standard LaTeX representation.
-        """
-        self._lazy_init()
-        # In full model mode, inference runs on image_crop.
-        # As robust heuristic/fallback:
-        return r"\sum_{i=1}^{n} x_i^2 = \frac{n(n+1)(2n+1)}{6}"
-
-    def extract_block_markdown(self, block: LayoutBlock, full_image: Image.Image, raw_text: Optional[str] = None) -> str:
-        """
-        Converts a detected layout block into formatted Markdown.
-        """
-        self._lazy_init()
-        w, h = full_image.size
-        x1, y1, x2, y2 = block.bbox
-        # Clamp to image dimensions
-        x1, y1 = max(0, x1), max(0, y1)
-        x2, y2 = min(w, x2), min(h, y2)
-
-        if block.block_type == "formula":
-            # If raw_text contains math, preserve or format as LaTeX block
-            if raw_text and ("=" in raw_text or "\\" in raw_text or "^" in raw_text):
-                clean_math = raw_text.strip()
-                if not clean_math.startswith("$$"):
-                    clean_math = f"$$\n{clean_math}\n$$"
-                return clean_math
-            return r"$$\int_{-\infty}^{\infty} e^{-x^2} dx = \sqrt{\pi}$$"
-
-        elif block.block_type == "title":
-            clean_title = raw_text.strip() if raw_text else "Section Header"
-            return f"## {clean_title}"
-
-        elif block.block_type == "table":
-            if raw_text:
-                return f"```\n{raw_text}\n```"
-            return "| Parameter | Value | Description |\n|---|---|---|\n| Default | 1.0 | Standard normalization |"
-
-        else:
-            # Standard body text
-            return raw_text if raw_text else ""
+    async def recognize_page(self, page: PDFPageData) -> str:
+        if not page.image_is_rendered or not page.image_path or not page.image_path.exists():
+            raise ValueError("OCR requires a real PDF page render; install Poppler and ensure it is on PATH")
+        return await self.ollama.recognize_image(
+            page.image_path, model=self.model_name,
+            keep_alive=config.ingestion.ocr_keep_alive,
+        )
 
     def process_page_text(self, page_text: str) -> str:
         """
