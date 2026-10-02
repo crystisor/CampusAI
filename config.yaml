@@ -9,7 +9,7 @@ ollama:
   llm_keep_alive: "-1"         # Keep permanently hot in GPU VRAM
   think: true                  # Enable model thinking; Discord receives only the filtered final answer
   llm_temperature: 0.2
-  llm_num_ctx: 4096
+  llm_num_ctx: 16384
   llm_top_p: 0.9
   llm_top_k: 40
   llm_repeat_penalty: 1.05
@@ -50,7 +50,10 @@ search:
 
 ingestion:
   layout_model: "pp-doclayoutV3"
-  ocr_model: "glm-ocr"
+  ocr_model: "glm-ocr-eot"
+  ocr_min_text_chars: 80       # OCR pages below this non-whitespace character count
+  ocr_formula_pages: false    # Also OCR pages with math-heavy lines (heuristic)
+  ocr_keep_alive: "1m"       # Release OCR model after inactivity
   storage_dir: "storage/subjects"
   dpi: 200
   chunk_size: 900             # Target characters (within requested 800-1000 range)

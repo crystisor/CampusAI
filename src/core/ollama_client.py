@@ -1,4 +1,6 @@
 import re
+import base64
+from pathlib import Path
 import logging
 from typing import List, Dict, Any, Optional, AsyncGenerator
 import httpx
@@ -177,6 +179,29 @@ class OllamaClient:
             # Never substitute thinking or legacy response text for chat content.
             raw_response = data.get("message", {}).get("content", "") if use_chat else data.get("response", "")
             return clean_llm_response(raw_response)
+
+    async def recognize_image(self, image_path: Path, model: str, keep_alive: str) -> str:
+        """Recognize a rendered page using Ollama's vision chat API."""
+        payload = {
+            "model": model,
+            "messages": [{
+                "role": "user", "content": "Text Recognition:",
+                "images": [base64.b64encode(image_path.read_bytes()).decode("ascii")],
+            }],
+            "stream": False,
+            "keep_alive": self._clean_keep_alive(keep_alive),
+            "options": {"temperature": 0, "num_ctx": 8192, "num_predict": 4096},
+        }
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.post(f"{self.base_url}/api/chat", json=payload)
+            response.raise_for_status()
+            data = response.json()
+        if data.get("done_reason") == "length":
+            raise ValueError("OCR output was truncated")
+        text = data.get("message", {}).get("content", "").strip()
+        if not text:
+            raise ValueError("OCR returned no text")
+        return text
 
     async def generate_stream(
         self,

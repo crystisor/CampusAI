@@ -4,7 +4,8 @@ from src.core.ollama_client import OllamaClient
 from src.config import config
 
 @pytest.mark.asyncio
-async def test_ollama_generate_options_and_keep_alive():
+async def test_ollama_generate_options_and_keep_alive(monkeypatch):
+    monkeypatch.setattr(config.ollama, "llm_num_ctx", 6144)
     client = OllamaClient()
     
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
@@ -27,7 +28,7 @@ async def test_ollama_generate_options_and_keep_alive():
         assert payload["think"] is config.ollama.think
         assert payload["options"] == {
             "temperature": 0.2,
-            "num_ctx": 4096,
+            "num_ctx": 6144,
             "top_p": 0.9,
             "top_k": 40,
             "repeat_penalty": 1.05,
