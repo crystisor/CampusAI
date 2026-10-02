@@ -30,6 +30,8 @@ class Reranker:
         self.model_name = model_name or config.reranker.model_name
         self.top_k = top_k or config.reranker.top_k
         self.device = device or config.reranker.device
+        self.max_length = config.reranker.max_length
+        self.score_threshold = config.reranker.score_threshold
         self._model = None
         self._tokenizer = None
         self._initialized = False
@@ -72,10 +74,6 @@ class Reranker:
         if not candidates:
             return []
 
-        # If candidates are already <= k, return them directly
-        if len(candidates) <= k:
-            return candidates
-
         self._lazy_init()
 
         if self._model is not None and self._tokenizer is not None:
@@ -87,7 +85,7 @@ class Reranker:
                         pairs,
                         padding=True,
                         truncation=True,
-                        max_length=512,
+                        max_length=self.max_length,
                         return_tensors="pt"
                     ).to(self._target_device)
                     
@@ -97,7 +95,7 @@ class Reranker:
                     candidate.score = float(score)
 
                 sorted_candidates = sorted(candidates, key=lambda x: x.score, reverse=True)
-                return sorted_candidates[:k]
+                return [c for c in sorted_candidates if c.score >= self.score_threshold][:k]
             except Exception as e:
                 logger.error(f"Error during neural reranking: {e}. Using heuristic fallback.")
 
@@ -119,4 +117,4 @@ class Reranker:
             c.score = float(c.score * 0.5 + overlap * 0.5)
 
         sorted_candidates = sorted(candidates, key=lambda x: x.score, reverse=True)
-        return sorted_candidates[:top_k]
+        return [c for c in sorted_candidates if c.score >= self.score_threshold][:top_k]

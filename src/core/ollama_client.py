@@ -80,6 +80,30 @@ class OllamaClient:
         except Exception:
             return False
 
+    def _generation_options(self, model: str, options: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Apply model defaults and translate token limits for Ollama's native API."""
+        defaults: Dict[str, Any] = {}
+        if model == config.ollama.llm_model:
+            defaults = {
+                "temperature": config.ollama.llm_temperature,
+                "num_ctx": config.ollama.llm_num_ctx,
+                "top_p": config.ollama.llm_top_p,
+                "top_k": config.ollama.llm_top_k,
+                "repeat_penalty": config.ollama.llm_repeat_penalty,
+            }
+        elif model == config.ollama.router_model:
+            defaults = {
+                "temperature": config.ollama.router_temperature,
+                "num_predict": config.ollama.router_max_tokens,
+                "num_gpu": config.ollama.router_num_gpu,
+            }
+        overrides = dict(options or {})
+        if "max_tokens" in overrides:
+            max_tokens = overrides.pop("max_tokens")
+            overrides.setdefault("num_predict", max_tokens)
+        defaults.update(overrides)
+        return defaults
+
     async def list_models(self) -> List[str]:
         """List all models currently installed in Ollama."""
         try:
@@ -111,9 +135,7 @@ class OllamaClient:
             elif target_model == config.ollama.router_model:
                 keep_alive = config.ollama.router_keep_alive
 
-        merged_options = dict(options or {})
-        if target_model == config.ollama.router_model and "num_gpu" not in merged_options:
-            merged_options["num_gpu"] = config.ollama.router_num_gpu
+        merged_options = self._generation_options(target_model, options)
 
         payload: Dict[str, Any] = {
             "model": target_model,
@@ -122,26 +144,38 @@ class OllamaClient:
         }
         if system:
             payload["system"] = system
+        # Spark's chat endpoint separates reasoning, while /generate can return
+        # an untagged continuation of the template's opening <think> token.
+        use_chat = target_model == config.ollama.llm_model
+        endpoint = "chat" if use_chat else "generate"
+        if use_chat:
+            payload.pop("prompt")
+            payload.pop("system", None)
+            payload["messages"] = []
+            if system:
+                payload["messages"].append({"role": "system", "content": system})
+            payload["messages"].append({"role": "user", "content": prompt})
         if merged_options:
             payload["options"] = merged_options
         cleaned_keep_alive = self._clean_keep_alive(keep_alive)
         if cleaned_keep_alive is not None:
             payload["keep_alive"] = cleaned_keep_alive
 
-        # Thinking configuration (defaults to False to avoid thinking/draft output)
+        # Configure model thinking independently of final-answer filtering.
         use_think = think if think is not None else getattr(config.ollama, "think", False)
         payload["think"] = use_think
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            res = await client.post(f"{self.base_url}/api/generate", json=payload)
-            if res.status_code == 400 and "think" in payload:
+            res = await client.post(f"{self.base_url}/api/{endpoint}", json=payload)
+            if res.status_code == 400 and "think" in payload and not use_chat:
                 # If an older Ollama daemon does not support the 'think' parameter, retry without it
                 fallback_payload = dict(payload)
                 fallback_payload.pop("think", None)
                 res = await client.post(f"{self.base_url}/api/generate", json=fallback_payload)
             res.raise_for_status()
             data = res.json()
-            raw_response = data.get("response", "")
+            # Never substitute thinking or legacy response text for chat content.
+            raw_response = data.get("message", {}).get("content", "") if use_chat else data.get("response", "")
             return clean_llm_response(raw_response)
 
     async def generate_stream(
@@ -162,9 +196,7 @@ class OllamaClient:
             elif target_model == config.ollama.router_model:
                 keep_alive = config.ollama.router_keep_alive
 
-        merged_options = dict(options or {})
-        if target_model == config.ollama.router_model and "num_gpu" not in merged_options:
-            merged_options["num_gpu"] = config.ollama.router_num_gpu
+        merged_options = self._generation_options(target_model, options)
 
         payload: Dict[str, Any] = {
             "model": target_model,

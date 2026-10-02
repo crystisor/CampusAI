@@ -23,3 +23,32 @@ def test_formula_preservation():
     assert found_formula is True
     assert chunks[0]["subject_id"] == "calculus_1"
     assert chunks[0]["page_number"] == 1
+
+def test_chunk_overlap():
+    chunker = MarkdownFormulaChunker(chunk_size=150, chunk_overlap=80)
+    markdown_text = (
+        "Paragraph One introduces the first core concept of algorithmic complexity.\n\n"
+        "Paragraph Two elaborates on Big-O notation and asymptotic upper bounds in computer science.\n\n"
+        "Paragraph Three discusses Big-Omega notation for lower bounds.\n\n"
+        "Paragraph Four summarizes tight bounds using Big-Theta notation."
+    )
+
+    chunks = chunker.chunk_page_markdown(
+        markdown_text=markdown_text,
+        subject_id="algorithms",
+        document_name="complexity",
+        page_number=1
+    )
+
+    assert len(chunks) > 1
+    # Check that trailing content from chunk 0 is carried over into chunk 1
+    chunk_0_text = chunks[0]["text"]
+    chunk_1_text = chunks[1]["text"]
+    # Verify overlap exists between consecutive chunks
+    overlap_found = any(line in chunk_1_text for line in chunk_0_text.split("\n\n") if len(line) > 20)
+    assert overlap_found is True
+
+def test_default_chunker_params():
+    chunker = MarkdownFormulaChunker()
+    assert chunker.chunk_size == 900
+    assert chunker.chunk_overlap == 150

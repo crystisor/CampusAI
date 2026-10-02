@@ -134,7 +134,7 @@ class IngestionPipeline:
         # 6. Embeddings (bge-m3)
         await emit("embed", 85, f"Generating bge-m3 embeddings for {len(all_chunks)} chunks on CPU...")
         vectors: List[List[float]] = []
-        batch_size = 10
+        batch_size = config.embeddings.batch_size
         for i in range(0, len(all_chunks), batch_size):
             batch = all_chunks[i : i + batch_size]
             batch_texts = [c["text"] for c in batch]
@@ -149,11 +149,11 @@ class IngestionPipeline:
                     vectors.extend(batch_vecs)
                 else:
                     for _ in range(len(batch) - len(batch_vecs)):
-                        batch_vecs.append([0.0] * 1024)
+                        batch_vecs.append([0.0] * config.embeddings.vector_size)
                     vectors.extend(batch_vecs)
             except Exception as e:
                 logger.warning(f"Batch embedding failure for slice {i}:{i+batch_size}: {e}")
-                vectors.extend([[0.0] * 1024] * len(batch))
+                vectors.extend([[0.0] * config.embeddings.vector_size] * len(batch))
 
         await emit("embed", 95, f"All {len(vectors)} vectors generated.")
 

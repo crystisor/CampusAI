@@ -6,7 +6,7 @@ class MarkdownFormulaChunker:
     Splits Markdown files into chunks while preserving math equations ($$...$$ and $...$).
     """
 
-    def __init__(self, chunk_size: int = 600, chunk_overlap: int = 100):
+    def __init__(self, chunk_size: int = 900, chunk_overlap: int = 150):
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
 
@@ -44,11 +44,42 @@ class MarkdownFormulaChunker:
             p_len = len(para)
             if current_len + p_len > self.chunk_size and current_chunk:
                 raw_chunks.append("\n\n".join(current_chunk))
-                current_chunk = [para]
-                current_len = p_len
+
+                # Carry over trailing content from previous chunk according to chunk_overlap
+                overlap_paras: List[str] = []
+                overlap_len = 0
+                if self.chunk_overlap > 0:
+                    for prev_para in reversed(current_chunk):
+                        para_cost = len(prev_para) + (2 if overlap_paras else 0)
+                        if overlap_len + para_cost <= self.chunk_overlap:
+                            overlap_paras.insert(0, prev_para)
+                            overlap_len += para_cost
+                        elif not overlap_paras:
+                            # Try to take sentences from the tail of prev_para if single paragraph exceeds overlap
+                            sentences = re.split(r"(?<=[.!?])\s+", prev_para)
+                            tail_sentences: List[str] = []
+                            tail_len = 0
+                            for sent in reversed(sentences):
+                                sent_cost = len(sent) + (1 if tail_sentences else 0)
+                                if tail_len + sent_cost <= self.chunk_overlap:
+                                    tail_sentences.insert(0, sent)
+                                    tail_len += sent_cost
+                                else:
+                                    break
+                            if tail_sentences:
+                                joined_tail = " ".join(tail_sentences)
+                                if "__MATH_BLOCK_" not in joined_tail or joined_tail.count("__MATH_BLOCK_") == len(re.findall(r"__MATH_BLOCK_\d+__", joined_tail)):
+                                    overlap_paras.insert(0, joined_tail)
+                                    overlap_len += len(joined_tail)
+                            break
+                        else:
+                            break
+
+                current_chunk = overlap_paras + [para]
+                current_len = sum(len(p) for p in current_chunk) + 2 * max(0, len(current_chunk) - 1)
             else:
                 current_chunk.append(para)
-                current_len += p_len + 2
+                current_len += p_len + (2 if len(current_chunk) > 1 else 0)
 
         if current_chunk:
             raw_chunks.append("\n\n".join(current_chunk))
