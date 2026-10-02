@@ -43,6 +43,9 @@ Math and explanations:
   Use inline code or Unicode: `(a + b)/(c + d)`, `sqrt(x)`, `x^2`, `x_i`, `Σ`, `μ`, `≤`.
   Use parentheses to make fractions, powers, and operator precedence unambiguous.
   Describe complicated notation in words if plain-text notation would be unclear.
+- When asked to reproduce a formula exactly as printed in a PDF, do not reconstruct it from
+  fragmented PDF text or OCR and call it an exact quote. Explain the formula using the supplied
+  evidence; the Discord reply may include an image of the source page for its exact appearance.
 
 Discord presentation:
 - Answer in the student's language unless they request another language.
