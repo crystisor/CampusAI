@@ -2,7 +2,8 @@ import os
 from pathlib import Path
 from typing import Optional, Literal
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+import math
 from dotenv import load_dotenv
 
 # Load .env file
@@ -76,6 +77,28 @@ class WebSettings(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8000
 
+class LatexSettings(BaseModel):
+    enabled: bool = True
+    auto_render: bool = True
+    node_executable: str = "node"
+    theme: Literal["light", "dark"] = "light"
+    scale: float = Field(default=2.0, ge=0.5, le=3.0)
+    timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    max_expression_chars: int = Field(default=2000, gt=0, le=2000)
+    max_expressions_per_answer: int = Field(default=4, gt=0, le=4)
+    max_width: int = Field(default=2048, gt=0, le=2048)
+    max_height: int = Field(default=1024, gt=0, le=1024)
+    max_pixels: int = Field(default=2097152, gt=0, le=2097152)
+    max_png_bytes: int = Field(default=1048576, gt=0, le=1048576)
+
+    @model_validator(mode="after")
+    def valid_values(self):
+        if not math.isfinite(self.scale) or not math.isfinite(self.timeout_seconds):
+            raise ValueError("LaTeX scale and timeout must be finite")
+        if not self.node_executable.strip():
+            raise ValueError("LaTeX Node executable cannot be empty")
+        return self
+
 class AppConfig(BaseModel):
     discord: DiscordSettings = Field(default_factory=DiscordSettings)
     ollama: OllamaSettings = Field(default_factory=OllamaSettings)
@@ -85,6 +108,7 @@ class AppConfig(BaseModel):
     search: SearchSettings = Field(default_factory=SearchSettings)
     ingestion: IngestionSettings = Field(default_factory=IngestionSettings)
     web: WebSettings = Field(default_factory=WebSettings)
+    latex: LatexSettings = Field(default_factory=LatexSettings)
 
 def load_config(config_path: Optional[Path] = None) -> AppConfig:
     if config_path is None:

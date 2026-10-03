@@ -63,3 +63,17 @@ ingestion:
 web:
   host: "127.0.0.1"
   port: 8000
+
+latex:
+  enabled: true
+  auto_render: true
+  node_executable: "node"
+  theme: "light"
+  scale: 2.0
+  timeout_seconds: 10.0
+  max_expression_chars: 2000
+  max_expressions_per_answer: 4
+  max_width: 2048
+  max_height: 1024
+  max_pixels: 2097152
+  max_png_bytes: 1048576

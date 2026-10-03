@@ -38,11 +38,7 @@ Math and explanations:
 - State relevant conditions, define variables, preserve units, and distinguish exact results
   from approximations. Include essential calculation steps or a concise justification when
   useful; check signs, arithmetic, units, and whether the result answers the question.
-- Discord does not render LaTeX. Convert source LaTeX to readable plain-text math; never emit
-  LaTeX commands, environments, or math delimiters such as $, $$, \(, or \[.
-  Use inline code or Unicode: `(a + b)/(c + d)`, `sqrt(x)`, `x^2`, `x_i`, `Σ`, `μ`, `≤`.
-  Use parentheses to make fractions, powers, and operator precedence unambiguous.
-  Describe complicated notation in words if plain-text notation would be unclear.
+{math_instructions}
 - When asked to reproduce a formula exactly as printed in a PDF, do not reconstruct it from
   fragmented PDF text or OCR and call it an exact quote. Explain the formula using the supplied
   evidence; the Discord reply may include an image of the source page for its exact appearance.
@@ -55,6 +51,19 @@ Discord presentation:
 - Provide the final answer and useful explanation only. Do not output private deliberation,
   scratchpads, drafts, or thinking tags such as <think>.
 """
+
+PLAIN_MATH = r"""- Discord does not render LaTeX. Convert source LaTeX to readable plain-text math; never emit
+  LaTeX commands, environments, or math delimiters such as $, $$, \(, or \[.
+  Use inline code or Unicode: `(a + b)/(c + d)`, `sqrt(x)`, `x^2`, `x_i`, `Σ`, `μ`, `≤`.
+  Use parentheses to make fractions, powers, and operator precedence unambiguous.
+  Describe complicated notation in words if plain-text notation would be unclear."""
+
+RENDERED_MATH = r"""- Answer the question first. Use LaTeX when equations, derivations, fractions, matrices, or
+  other mathematical notation make the explanation clearer; no user request for LaTeX is needed.
+  Use plain text when typesetting adds no value. Put each expression to render inside $$...$$.
+  Use explicit \begin{aligned}...\end{aligned} for aligned rows. Keep explanations,
+  conditions, units, and citations outside equations. Keep simple variables in prose.
+  Do not place rendered math in code fences or generate a full LaTeX document."""
 
 class RAGPipeline:
     """
@@ -84,6 +93,8 @@ class RAGPipeline:
         query: str,
         subject_id: str,
         subject_name: Optional[str] = None,
+        *,
+        render_math: bool = False,
     ) -> Dict[str, Any]:
         """
         Executes full query pipeline and returns response with metadata.
@@ -138,7 +149,7 @@ class RAGPipeline:
                 "source": c.source,
                 "citation": {
                     key: c.metadata[key]
-                    for key in ("document_name", "page_number", "title", "url")
+                    for key in ("document_name", "course_number", "page_number", "title", "url")
                     if c.metadata.get(key) is not None
                 },
                 "text": c.text,
@@ -158,7 +169,7 @@ class RAGPipeline:
         }
 
         # 5. Do not label retrieved excerpts as verified or hide missing evidence.
-        system_prompt = SYSTEM_PROMPT_TEMPLATE.format(subject_name=sub_name)
+        system_prompt = SYSTEM_PROMPT_TEMPLATE.format(subject_name=sub_name, math_instructions=RENDERED_MATH if render_math else PLAIN_MATH)
         final_user_prompt = json.dumps(
             {"question": query, "reference_status": reference_status, "references": references},
             ensure_ascii=False,

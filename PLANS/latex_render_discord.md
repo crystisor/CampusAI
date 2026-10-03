@@ -1,332 +1,334 @@
-# Implementation Plan: LaTeX Rendering in Discord Bot
+# Implementation Plan: LaTeX Output for CampusAI in Discord
 
-This document provides a comprehensive, step-by-step implementation guide for building and integrating a LaTeX rendering feature into a Discord bot using TypeScript, `discord.js`, `mathjax`, and `sharp`.
+Status: implemented locally, with automated verification; live Discord acceptance remains pending.
+Reviewed against the local repository and upstream source on 2026-10-02.
 
----
+Implementation verified on 2026-10-03 with Node 24.21.0, MathJax 4.1.3,
+Sharp 0.35.5, and Python 3.14. The checklist below retains unchecked live-server
+items; local rendering and mocked Discord tests do not establish live acceptance.
+The complete Python suite passed (91 tests), including the `latex_real` fixtures;
+Python/JavaScript syntax checks and `git diff --check` also passed.
 
-## 1. Overview & Architecture
+## 1. Goal and scope
 
-### 1.1 Goal
-Allow Discord users to input LaTeX equations (via slash commands or message triggers) and receive a cleanly formatted, high-resolution PNG image rendered in the Discord channel.
+The primary goal is for CampusAI to answer ordinary user questions and automatically use LaTeX for mathematical expressions when it improves the explanation. Users should not need to request LaTeX, supply TeX source, or run a rendering command. The answer-generating model chooses suitable mathematical notation; the bot detects the marked expressions and renders them before sending the answer.
 
-### 1.2 Pipeline
-```
-Discord Slash Command (/latex <code> [scale] [brightness])
-       │
-       ▼
-1. Discord Bot Interaction Handler (deferReply immediately)
-       │
-       ▼
-2. LaTeX Preprocessing (wrap in color, math environment: \color{white} \begin{aligned} ... \end{aligned})
-       │
-       ▼
-3. MathJax 3 Engine (TeX input ──► SVG markup string)
-       │
-       ▼
-4. Sharp Rasterizer (SVG buffer ──► scale, adjust brightness ──► PNG buffer)
-       │
-       ▼
-5. Discord Response (editReply with Embed + attachment://rendered.png)
-```
+Support this behavior in:
 
----
+1. Answers to messages in subject-bound study channels.
+2. Answers produced by the existing `/ask` command.
+3. As a secondary convenience, a new `/latex code:<expression> [scale] [theme]` command that renders supplied TeX without invoking the LLM. This command is not a prerequisite for automatic math in answers.
 
-## 2. Dependencies & Prerequisites
+Keep explanations, citations, and variable definitions as Discord text. Discord cannot place an attachment inside a sentence; inline expressions become labeled image blocks next to the surrounding explanation.
 
-### 2.1 Package Requirements
-Install required runtime libraries:
-```bash
-npm install discord.js mathjax sharp
-npm install --save-dev @types/sharp @types/node typescript
-```
-*(Or equivalent using `pnpm` / `yarn`)*.
+For example, a student asking "How do I solve a quadratic equation?" receives an explanation with a typeset quadratic formula and relevant steps. A question such as "What is the purpose of this course?" receives a normal text answer without unnecessary formulas or renderer calls. Do not require formula-related keywords to enable generated-equation rendering; the existing keyword heuristic applies only to selecting source PDF pages.
 
-### 2.2 Native Module Notes
-- `sharp` depends on `libvips`. It automatically downloads precompiled binaries for most platforms (Windows, macOS, Linux x64/arm64). If deploying in Docker/Linux containers, ensure standard glibc or musl dependencies are present.
-- `mathjax` (version 3.x) runs headlessly in Node.js without needing a browser DOM.
+Use the existing Python/discord.py bot with a small local Node.js helper for MathJax and Sharp. Rendering must work offline after dependency installation. Support mathematical TeX, including fractions, integrals, matrices, cases, and aligned equations. Full LaTeX documents, arbitrary packages, TikZ, and shell-based TeX compilation are outside this feature.
 
----
+## 2. Analysis of the reference implementation
 
-## 3. TypeScript Ambient Type Declarations
+Reference: [alvesvaren/latex-bot-ts](https://github.com/alvesvaren/latex-bot-ts), inspected on `main` with Git tree SHA `18cd37ba9abbc52fe174a419585105765adb2594`. Source links below follow `main`; the tree SHA records the inspected snapshot.
 
-MathJax v3 lacks complete ambient types for Node.js usage. Create a type declaration file to avoid TypeScript compilation errors.
+- [commands/latex.ts](https://github.com/alvesvaren/latex-bot-ts/blob/main/commands/latex.ts) initializes MathJax at module load, wraps input in white-colored `aligned` math, converts TeX to SVG, rasterizes with Sharp, and returns an embedded PNG. It exposes brightness and scale.
+- [index.ts](https://github.com/alvesvaren/latex-bot-ts/blob/main/index.ts) defers interactions in the shared dispatcher before executing the command. It registers all loaded commands and catches command errors.
+- [package.json](https://github.com/alvesvaren/latex-bot-ts/blob/main/package.json) uses `mathjax ^3.2.2`, `sharp ^0.32.1`, and `discord.js ^14.11.0`. It declares MIT; the inspected tree has no standalone LICENSE file. This plan adapts the architecture without copying its implementation. Preserve attribution and establish applicable license text if reusing code.
+- [README](https://github.com/alvesvaren/latex-bot-ts/blob/main/README.md) describes this as an older public implementation; some live-bot features are absent.
 
-### File: `types/mathjax.d.ts` (or `global.d.ts`)
-```typescript
-declare module 'mathjax' {
-  export function init(options: {
-    loader: { load: string[] };
-    [key: string]: unknown;
-  }): Promise<{
-    tex2svgPromise: (
-      tex: string,
-      options?: { display?: boolean; [key: string]: unknown }
-    ) => Promise<unknown>;
-  }>;
-}
+Retain its TeX -> SVG -> PNG approach and prompt interaction acknowledgment. Adapt the integration, output handling, dependency versions, and resource limits to CampusAI. The upstream command does not implement automatic LLM-answer rendering, bounded subprocess execution, or per-expression failure recovery.
 
-declare namespace MathJax {
-  const startup: {
-    adaptor: {
-      innerHTML: (node: unknown) => string;
-    };
-  };
-}
-```
+### Problems in the original local plan
 
----
+| Original assumption | Repository-specific correction |
+| --- | --- |
+| Build TypeScript commands and `src/index.ts` | Add Python cogs to the existing `StudyBot` |
+| Install another Discord client library | Keep `discord.py`; Node only renders images |
+| Slash command alone enables math answers | Integrate study replies and `/ask`, and update the prompt that currently forbids LaTeX |
+| Unpinned `mathjax` installation with v3 code | Use one consistent MathJax major/API and lock tested dependencies |
+| Transparent white text and brightness | Use controlled foreground/background themes readable in either Discord theme |
+| Always wrap input in `aligned` | Accept complete supported environments without an extra wrapper |
+| Presence of SVG means success | Capture parser failures and validate PNG output |
+| Register only the new command with REST | Load the cog before the existing complete `tree.sync()` |
+| Resize without resource limits | Bound input, process lifetime, SVG/raster dimensions, and output bytes |
 
-## 4. Step-by-Step Implementation
+## 3. Current code and integration points
 
-### Step 1: Create the Dedicated LaTeX Rendering Service
-Encapsulate the MathJax and Sharp rendering logic into a standalone service. This keeps command handlers clean and makes testing straightforward.
+| File / symbol | Current behavior | Planned change |
+| --- | --- | --- |
+| `src/bot/bot.py`: `StudyBot.setup_hook` | Loads study/admin cogs and syncs the command tree | Own one shared renderer; probe it and load the new cog before sync |
+| `src/bot/cogs/study_chat.py`: `StudyChatCog.on_message` | Calls RAG in bound guild channels, cleans output, sends chunked text | Render marked math before text chunking |
+| `src/bot/cogs/admin.py`: `AdminCog.ask_cmd` | Defers, calls RAG, sends text | Use the same math preparation and delivery path |
+| `src/rag/pipeline.py`: `SYSTEM_PROMPT_TEMPLATE` | Explicitly prohibits LaTeX commands and delimiters | Select math instructions according to rendering capability |
+| `src/bot/cogs/study_chat.py`: `source_formula_page`, `render_formula_page` | Selects and renders an original PDF page using Poppler | Preserve this evidence path alongside generated equations |
+| `src/bot/cogs/study_chat.py`: `format_references` | Lists all supplied sources, groups PDF pages, and includes course numbers when present | Preserve its output as a separate text part outside math detection |
+| `src/config.py`: `AppConfig`, `load_config` | Pydantic settings from YAML | Add validated `LatexSettings` |
+| `src/web/static/js/dashboard.js` and web template | Browser-only KaTeX preview | No change required; this does not render Discord attachments |
+| `requirements.txt` | Python runtime, Pillow, pytest | No additional Python rendering dependency expected |
+| `docker-compose.yml` | Qdrant only | Install the renderer on the host running the Python bot |
 
-#### File: `src/services/latexRenderer.ts`
-```typescript
-import mathjax from 'mathjax';
-import sharp from 'sharp';
+The existing graphify graph was used for orientation, then verified against source files because some graph locations predate current code.
 
-export interface RenderOptions {
-  scale?: number;       // Scaling factor (default: 2)
-  brightness?: number;  // Brightness multiplier (0 to 1, default: 0.8)
-  color?: string;       // Text color (default: 'white')
-}
+## 4. Proposed architecture
 
-export class LatexRenderer {
-  private static jaxInstance: any = null;
-  private static initPromise: Promise<any> | null = null;
+~~~text
+StudyChatCog.on_message                 AdminCog.ask_cmd
+           |                                  |
+           +---- RAGPipeline.process_query ---+
+                              |
+                    clean_llm_response
+                              |
+                parse text / math segments
+                              |
+                  shared LatexRenderer <---- LatexCog /latex
+                              |
+                 bounded local Node process
+                              |
+            MathJax TeX -> standalone SVG -> Sharp PNG
+                              |
+            ordered Discord text / image parts
+                              |
+             citations and selected source PDF page
+~~~
 
-  /**
-   * Initializes the MathJax singleton instance.
-   */
-  public static async getJax() {
-    if (this.jaxInstance) return this.jaxInstance;
-    if (!this.initPromise) {
-      this.initPromise = mathjax.init({
-        loader: {
-          load: ['input/tex', 'output/svg'],
-        },
-      });
-    }
-    this.jaxInstance = await this.initPromise;
-    return this.jaxInstance;
-  }
+### New modules
 
-  /**
-   * Renders a LaTeX string to a PNG Buffer.
-   *
-   * @param code Raw LaTeX expression from user
-   * @param options Styling and raster options
-   * @returns PNG Buffer
-   */
-  public static async renderToPng(
-    code: string,
-    options: RenderOptions = {}
-  ): Promise<Buffer> {
-    const {
-      scale = 2,
-      brightness = 0.8,
-      color = 'white',
-    } = options;
+- `src/bot/latex_renderer.py`: availability probe, admission control, subprocess lifecycle, typed failures, validated PNG bytes. No Discord or LLM calls.
+- `src/bot/math_messages.py`: pure segmentation and output preparation, with small delivery helpers for replies and deferred interactions.
+- `src/bot/cogs/latex.py`: command declaration, validation, immediate defer, rendering, and response.
+- `tools/latex-renderer/render.mjs`: local JSON-in/JSON-out executable. No HTTP service or Discord credentials.
 
-    const jax = await this.getJax();
+Suggested renderer interface:
 
-    // Wrap equation: set foreground color and wrap in an aligned environment
-    const wrappedCode = `\\color{${color}} \\begin{aligned} ${code.trim()} \\end{aligned}`;
+~~~python
+async def probe(self) -> bool: ...
+async def render_many(self, expressions: list[str], *, scale: float, theme: str) -> list[RenderResult]: ...
+async def close(self) -> None: ...
+~~~
 
-    // 1. TeX to SVG conversion
-    const svgNode = await jax.tex2svgPromise(wrappedCode, { display: true });
-    const svgString = MathJax.startup.adaptor.innerHTML(svgNode);
+Each `RenderResult` contains PNG bytes and dimensions, or a controlled category: `invalid_input`, `syntax`, `unsupported`, `too_large`, `busy`, `timeout`, `unavailable`, or `protocol_error`. The message layer retains original TeX for fallback.
 
-    // 2. Validate that valid SVG was produced
-    if (!svgString || !svgString.includes('<svg')) {
-      throw new Error('Failed to generate valid SVG from LaTeX input.');
-    }
+### Process and protocol
 
-    // Check for MathJax internal parsing errors (renders <merror>)
-    if (svgString.includes('data-mjx-error') || svgString.includes('<merror')) {
-      throw new Error('LaTeX syntax error.');
-    }
+Use one short-lived Node process per batch of up to four expressions. Initialize MathJax once per batch, then render sequentially. This incurs startup cost per answer but gives Python a process it can terminate on timeout. Measure latency before introducing a persistent worker or cache.
 
-    // 3. Rasterize and process with Sharp
-    const sharpInstance = sharp(Buffer.from(svgString));
-    const metadata = await sharpInstance.metadata();
-    const baseHeight = metadata.height || 32;
+Launch via `asyncio.create_subprocess_exec`, passing an argument array and an absolute helper path resolved from `BASE_DIR`. Send UTF-8 JSON on stdin. Never interpolate TeX into shell commands, filenames, executable arguments, or JavaScript source. Test paths containing spaces.
 
-    const pngBuffer = await sharpInstance
-      .resize({
-        height: Math.ceil(baseHeight * Math.min(Math.max(scale, 0.5), 5)),
-      })
-      .modulate({
-        brightness: Math.min(Math.max(brightness, 0.1), 1.0),
-      })
-      .png({ effort: 1 })
-      .toBuffer();
+Example input:
 
-    return pngBuffer;
-  }
-}
-```
+~~~json
+{"version":1,"expressions":["E=mc^2","\\frac{a}{b}"],"scale":2,"theme":"light"}
+~~~
 
----
+Return one JSON document with `version` and an ordered `results` array. Each entry contains either `ok: true`, `png_base64`, `width`, and `height`, or `ok: false` and a controlled error category. A syntax failure must not discard successful sibling expressions; a batch crash or deadline falls back to source text for the whole batch.
 
-### Step 2: Implement the Slash Command
+Reserve stdout for protocol data and stderr for bounded diagnostics. Validate schemas, result counts, base64, PNG decoding, byte counts, and dimensions on the Python side. Initial fixed protocol caps: 64 KiB input, 6 MiB stdout, and 16 KiB stderr. Enforce total stream caps while reading, not just after buffering.
 
-#### File: `src/commands/latex.ts`
-```typescript
-import {
-  ChatInputCommandInteraction,
-  SlashCommandBuilder,
-  EmbedBuilder,
-  AttachmentBuilder,
-} from 'discord.js';
-import { LatexRenderer } from '../services/latexRenderer.js';
+Start with one active batch globally and immediate `busy` fallback instead of an unbounded waiting queue. Put a deadline around the complete child lifetime. On timeout, cancellation, output overflow, or shutdown, kill and await the child, close pipes, and release capacity. Track active children in the shared renderer; clean up from `StudyBot.close()` before completing the parent close.
 
-export const data = new SlashCommandBuilder()
-  .setName('latex')
-  .setDescription('Render a LaTeX equation into an image')
-  .addStringOption(option =>
-    option
-      .setName('code')
-      .setDescription('LaTeX expression to render')
-      .setRequired(true)
-  )
-  .addNumberOption(option =>
-    option
-      .setName('scale')
-      .setDescription('Image scale multiplier (0.5 to 5, default 2)')
-      .setMinValue(0.5)
-      .setMaxValue(5)
-  )
-  .addNumberOption(option =>
-    option
-      .setName('brightness')
-      .setDescription('Brightness adjustment (0.1 to 1.0, default 0.8)')
-      .setMinValue(0.1)
-      .setMaxValue(1)
-  );
+An asyncio timeout alone does not terminate a subprocess. Windows needs a subprocess-capable event loop. These behaviors require real process tests. [Python asyncio subprocess documentation](https://docs.python.org/3/library/asyncio-subprocess.html)
 
-export async function execute(interaction: ChatInputCommandInteraction) {
-  // CRITICAL: Defer immediately to satisfy Discord's 3-second acknowledgement window
-  await interaction.deferReply();
+## 5. MathJax and Sharp implementation
 
-  const code = interaction.options.getString('code', true);
-  const scale = interaction.options.getNumber('scale') ?? 2;
-  const brightness = interaction.options.getNumber('brightness') ?? 0.8;
+### Dependencies
 
-  try {
-    const pngBuffer = await LatexRenderer.renderToPng(code, {
-      scale,
-      brightness,
-    });
+Add an isolated `tools/latex-renderer/package.json` and committed `package-lock.json`. Use JavaScript ESM, `@mathjax/src` major 4, and `sharp`. Choose exact compatible releases during implementation, save exact versions, and document the tested supported Node LTS version in `engines` and the README. Install and lock any font package required by that MathJax configuration.
 
-    const attachment = new AttachmentBuilder(pngBuffer, {
-      name: 'latex.png',
-    });
+Deploy the committed set with:
 
-    const embed = new EmbedBuilder()
-      .setColor(0x2f3136)
-      .setImage('attachment://latex.png')
-      .setFooter({ text: 'Rendered with MathJax' });
+~~~powershell
+npm ci --prefix tools/latex-renderer
+~~~
 
-    await interaction.editReply({
-      embeds: [embed],
-      files: [attachment],
-    });
-  } catch (error: any) {
-    const isSyntaxError = error?.message?.includes('LaTeX syntax error');
-    const userMessage = isSyntaxError
-      ? '❌ **LaTeX Syntax Error**: Please check your TeX markup.'
-      : '❌ **Error**: Failed to render LaTeX equation.';
+Install on each deployment platform; do not copy Windows `node_modules` onto Linux. Sharp selects platform-specific native binaries and needs optional dependencies installed. [Sharp installation](https://sharp.pixelplumbing.com/install/)
 
-    await interaction.editReply({
-      content: userMessage,
-    });
-  }
-}
-```
+Do not add TypeScript, `@types/sharp`, a browser runtime, or another Discord SDK. The Python bridge uses the standard library and existing Pillow. The existing `.gitignore` already excludes `node_modules/`.
 
----
+### MathJax setup and input policy
 
-### Step 3: Register Command in Bot Entry Point
+1. Configure a local loader, liteDOM, TeX input, SVG output, and a locally installed font before startup. Await startup and use asynchronous conversion for local font loading. Call `MathJax.done()` at process completion where applicable. Do not combine v3 `init()` examples with v4 package paths. [MathJax Node setup](https://docs.mathjax.org/en/latest/server/components.html)
+2. Start from `input/tex-base`; explicitly load AMS and enable only `base` and `ams`. Exclude `require`, `autoload`, HTML/link/image extensions, and user-selected loader paths. Unsupported commands fail without fetching packages. [MathJax TeX extensions](https://docs.mathjax.org/en/latest/input/tex/extensions.html)
+3. Set finite buffer and expansion limits supported by the pinned version. Configure `formatError` to report/throw parse failures instead of accepting an error image. Include unknown commands and malformed environments in tests. [TeX input options](https://docs.mathjax.org/en/latest/options/input/tex.html)
+4. Isolate TeX state between expressions: macro definitions, labels, and numbering must not leak. Reuse loaded modules/font data, but reset or recreate per-expression input/document state and test the behavior.
+5. Use `svg.fontCache: 'none'` to make each SVG independent. Serialize the SVG element through the loaded adaptor, with valid namespace, finite dimensions, and viewBox. [MathJax SVG options](https://docs.mathjax.org/en/latest/options/output/svg.html)
 
-Ensure commands are deployed to Discord API and wired to interaction listeners.
+The answer parser removes delimiters and passes bare TeX. For `/latex`, accept bare TeX or strip one matching outer `$$...$$`, `\[...\]`, or `\(...\)` pair. Preserve backslashes and interior whitespace. Require explicit `aligned` for multiple alignment rows; accept complete `pmatrix`, `cases`, and other supported environments directly.
 
-#### File: `src/index.ts` (Summary of essential wiring)
-```typescript
-import { Client, GatewayIntentBits, Events, REST, Routes } from 'discord.js';
-import * as latexCommand from './commands/latex.js';
+### Appearance and resource checks
 
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds],
-});
+- Default `light`: dark text on an opaque near-white background. Optional `dark`: near-white text on an opaque dark background. Add padding. Replace brightness with this theme choice.
+- Apply controlled foreground color to generated SVG. Theme is an enum, not arbitrary CSS or TeX.
+- Convert MathJax relative dimensions to pixels using the selected font metrics; preserve viewBox/aspect ratio. Missing or invalid dimensions are errors, not guessed defaults.
+- Reject SVG above 1 MiB and out-of-bounds target dimensions before rasterization.
+- Rasterize at the requested resolution; account for scale before creating pixels, rather than enlarging a low-resolution PNG.
+- Use Sharp `limitInputPixels` as an additional guard; verify final width, height, pixel count, and PNG size. Sharp `density` controls SVG rasterization resolution. [Sharp input options](https://sharp.pixelplumbing.com/api-constructor/)
+- Return images in memory. No persistent cache or shared temporary output files are needed.
 
-// Register slash command on ready
-client.once(Events.ClientReady, async c => {
-  console.log(`Logged in as ${c.user.tag}`);
+The child process provides termination isolation, not an OS security sandbox. Never send user or model TeX to `latex`, `pdflatex`, or a shell. Do not log full formulas, answers, or the child environment.
 
-  const rest = new REST().setToken(process.env.DISCORD_TOKEN!);
-  await rest.put(Routes.applicationCommands(c.user.id), {
-    body: [latexCommand.data.toJSON()],
-  });
-  console.log('Slash commands registered.');
-});
+## 6. Configuration and lifecycle
 
-// Handle command execution
-client.on(Events.InteractionCreate, async interaction => {
-  if (!interaction.isChatInputCommand()) return;
+Add `LatexSettings` and `AppConfig.latex` with `Field(default_factory=LatexSettings)`. Add matching YAML defaults:
 
-  if (interaction.commandName === 'latex') {
-    try {
-      await latexCommand.execute(interaction);
-    } catch (err) {
-      console.error('Unhandled interaction error:', err);
-      if (interaction.deferred || interaction.replied) {
-        await interaction.editReply({ content: 'An unexpected error occurred.' });
-      } else {
-        await interaction.reply({ content: 'An unexpected error occurred.', ephemeral: true });
-      }
-    }
-  }
-});
+~~~yaml
+latex:
+  enabled: true
+  auto_render: true
+  node_executable: "node"
+  theme: "light"
+  scale: 2.0
+  timeout_seconds: 10.0
+  max_expression_chars: 2000
+  max_expressions_per_answer: 4
+  max_width: 2048
+  max_height: 1024
+  max_pixels: 2097152
+  max_png_bytes: 1048576
+~~~
 
-client.login(process.env.DISCORD_TOKEN);
-```
+Validate finite positive limits, theme membership, and scale in `[0.5, 3.0]`. Preserve hard ceilings on expression count, dimensions, and bytes so configuration cannot exceed protocol bounds. These are initial product limits to validate against the fixtures.
 
----
+Create the shared renderer in `StudyBot.setup_hook` and probe it by rendering a small known formula under the same deadline. Missing Node, dependencies, fonts, or Sharp marks it unavailable and produces an actionable startup log. Study/admin cogs and command sync must still load. Do not install dependencies at startup.
 
-## 5. Critical Best Practices & Gotchas
+Automatic rendering capability is `enabled AND auto_render AND available`; `/latex` needs `enabled AND available`. A process-level failure should mark availability false until a successful bounded probe or restart. A syntax, input, size, or busy failure must not disable the service globally.
 
-| Challenge | Why it Happens | Recommended Solution |
-| :--- | :--- | :--- |
-| **Discord Interaction Timeout** | Discord requires acknowledgment within 3,000ms. MathJax parsing + Sharp rasterization can exceed this during cold start or high server load. | Always invoke `await interaction.deferReply()` immediately as the first line of the command execution. |
-| **Unreadable Dark Mode Text** | Default TeX text color is `#000000` (black), which is invisible against Discord's dark theme backgrounds. | Prepend `\color{white}` or wrap in `<svg>` styling before rasterizing. Using a brightness factor around `0.8` prevents high-contrast eye strain. |
-| **MathJax Singleton Initialization** | Calling `mathjax.init()` repeatedly per command introduces massive latency and memory consumption. | Initialize MathJax **once** at application launch and reuse the instance for all rendering requests. |
-| **Invalid Syntax Crashing Process** | Malformed TeX inputs could throw or produce `<merror>` nodes in the SVG tree. | Inspect the generated SVG for `data-mjx-error` or `<merror>` tags and return a descriptive user-facing error message instead of failing silently. |
-| **Multi-line Math Support** | Raw LaTeX standard commands do not support alignment across lines without math environments. | Wrap user input inside `\begin{aligned} ... \end{aligned}` so users can use `\\` and `&` formatting natively. |
+## 7. Automatic math in study replies and /ask
 
----
+### Prompt changes
 
-## 6. Verification & Test Suite
+Extend `RAGPipeline.process_query` with keyword-only `render_math: bool = False`. Both Discord answer paths pass the renderer's automatic capability; existing callers retain plain-text behavior by default. This flag permits mathematical rendering; it does not require every answer to contain an equation. Apply the presentation instructions consistently to DIRECT, RAG, WEB, and HYBRID answers without introducing another routing decision or a separate LLM call.
 
-Verify the implementation against the following test inputs:
+Select only the math-presentation instruction block:
 
-1. **Basic Equation**:
-   - Input: `E = mc^2`
-   - Expected: Single line equation with white text.
+- Disabled/unavailable: retain current plain-text/Unicode math instructions.
+- Enabled: answer the user's question first and choose LaTeX when equations, derivations, fractions, matrices, or other mathematical notation make the answer clearer. No explicit request for LaTeX is needed. Use plain text when mathematical typesetting adds no value. Put expressions intended for rendering inside `$$...$$`, keep simple variables in prose, and use explicit `aligned` for aligned rows. Keep explanations, conditions, units, and citations outside equations. Do not put intended rendered math inside code fences or generate a complete LaTeX document.
 
-2. **Fractions & Integrals**:
-   - Input: `\int_{0}^{\infty} \frac{x^3}{e^x - 1} \, dx = \frac{\pi^4}{15}`
-   - Expected: Full height fraction and integral symbols properly rendered.
+Preserve evidence, OCR uncertainty, citation, and private-reasoning rules, including the current `course_number` citation metadata. Rendering changes appearance, not correctness. Do not invoke the LLM again merely because an image failed.
 
-3. **Multi-line Aligned System**:
-   - Input: `a + b &= 10 \\ 2a - b &= 5`
-   - Expected: Proper vertical alignment at the `&` symbol.
+The template currently calls `.format(subject_name=...)`. Insert math instructions as a substitution value or otherwise protect literal TeX braces from format-field interpretation.
 
-4. **Matrices**:
-   - Input: `\begin{pmatrix} 1 & 2 \\ 3 & 4 \end{pmatrix}`
-   - Expected: 2x2 matrix with curved parentheses.
+### Segmentation contract
 
-5. **Syntax Error Handling**:
-   - Input: `\frac{1}{`
-   - Expected: Bot catches syntax error and replies with user-friendly error notice, without crashing.
+Implement a small stateful scanner in `math_messages.py`:
+
+- Recognize `$$...$$`, `\[...\]`, and `\(...\)` outside code spans and fenced blocks, honoring escaping and delimiter precedence.
+- Leave single `$` untouched to avoid interpreting prices as math; the prompt must not request single-dollar delimiters.
+- Preserve unmatched delimiters, empty spans, and unsupported forms as literal text. An unmatched opener must not swallow the remaining answer.
+- Preserve inline code and backtick/tilde fences, including fenced LaTeX examples.
+- Parse only the cleaned answer, before Discord chunking. Exclude the generated subject header and references footer from math detection.
+- Assign equation numbers in occurrence order. Attempt up to four eligible expressions; keep oversized and excess expressions as copyable text.
+
+For example, `The energy is \(E=mc^2\). Here m is mass.` becomes text referring to Equation 1, the labeled equation image, and the remaining explanation in order.
+
+### Message preparation and delivery
+
+Build ordered text/image parts. Give each PNG a name such as `equation_1.png`, a matching caption, and a bounded attachment description containing source TeX. Mark truncation in descriptions explicitly.
+
+Use `discord.File(BytesIO(png), filename=..., description=...)`. A bare attachment is sufficient. If using an embed, its `attachment://` name must match and Embed Links permission must be handled. Allocate a new buffer/file for each send attempt and close it afterward.
+
+Split text at paragraph/newline/word boundaries into at most 1,950 characters including inserted labels/fence markers, with a hard split for long tokens. Close/reopen code fences when necessary. Never split math source before parsing. Preserve the full output of the existing `format_references(top_contexts)` in a separate text part when necessary, including grouped pages, course numbers, and web sources. Pass this footer into the shared preparation helper from the cog so the helper does not import its caller.
+
+- Study replies: first part replies to the triggering message; subsequent parts go to the same channel in order.
+- `/ask`: retain immediate defer, edit the original response with the first part, then use interaction followups.
+- Send one generated equation per image part. Check bytes against both configured limits and the destination's applicable upload limit; do not assume a universal Discord upload cap.
+- Use `discord.AllowedMentions.none()` for generated and fallback content.
+
+On a render failure, replace that equation with safely fenced, copyable TeX and a brief notice. Handle backticks inside the source when selecting fences. Other successful parts remain available.
+
+If Attach Files is missing, use text fallback. On a definite attachment rejection, retry only that unsent part as text. Do not resend already delivered parts or blindly retry an ambiguous network failure. If text delivery is also forbidden, log and stop.
+
+### Existing PDF formula behavior
+
+Preserve `source_formula_page`, its path containment checks, and `render_formula_page`. Send the selected page independently, labeled **Source PDF page** with available document/page metadata. Check its size separately and retain citations if its upload fails.
+
+The selector currently uses formula-related query text and the first eligible retrieved page; it does not prove that a generated formula is an exact transcription. Never label generated MathJax output as original PDF evidence. Keep source-page selection in study replies; extending it to `/ask` is not required for this feature.
+
+## 8. New /latex command
+
+Create a `LatexCog` using `discord.app_commands.command` and the current cog `setup` convention:
+
+- `code`: required string, constrained by the input limit and revalidated after normalization.
+- `scale`: optional number in `[0.5, 3.0]`, default from configuration.
+- `theme`: optional `light`/`dark` choice, default from configuration.
+
+Make the initial command guild-only, available without a subject binding. It must not invoke RAG, routing, web search, or Ollama.
+
+Immediately call `await interaction.response.defer(thinking=True)` before rendering. Discord requires initial acknowledgment within three seconds. [Discord interaction lifecycle](https://docs.discord.com/developers/interactions/receiving-and-responding)
+
+Complete the response with `interaction.edit_original_response(attachments=[discord.File(...)], ...)`. Editing uses `attachments`, not `file`. Report controlled errors using that deferred response, without attempting a second initial acknowledgment. [discord.py interaction API](https://discordpy.readthedocs.io/en/stable/interactions/api.html)
+
+Load `src.bot.cogs.latex` before the existing `tree.sync()`. Verify `/ask`, `/bind`, `/unbind`, `/status`, and `/subjects` remain registered alongside `/latex`. No second client or extra message listener is needed.
+
+## 9. Implementation order and file checklist
+
+1. Build the isolated Node helper, lock dependencies, and verify real mathematical fixtures offline.
+2. Add validated settings, the Python bridge, bounded cleanup, and the availability probe.
+3. Implement the scanner, ordered message preparation, chunking, and fallback.
+4. Add bot ownership/shutdown and the new cog through existing command sync.
+5. Add capability-aware prompt instructions and integrate both answer paths.
+6. Verify source-page coexistence, update documentation, and complete acceptance checks.
+
+| File | Planned work |
+| --- | --- |
+| `tools/latex-renderer/package.json`, `package-lock.json`, `render.mjs` | New helper and reproducible dependencies |
+| `src/bot/latex_renderer.py` | Shared async renderer service |
+| `src/bot/math_messages.py` | Parsing, prepared parts, delivery helpers |
+| `src/bot/cogs/latex.py` | Explicit rendering command |
+| `src/bot/bot.py` | Startup/probe, shared ownership, cleanup, cog loading |
+| `src/bot/cogs/study_chat.py` | Automatic rendering and preserved source-page path |
+| `src/bot/cogs/admin.py` | `/ask` uses shared math output |
+| `src/rag/pipeline.py` | Capability parameter and math instruction selection |
+| `src/config.py`, `config.yaml` | Settings and defaults |
+| `tests/test_latex_renderer.py`, `tests/test_math_messages.py`, `tests/test_latex_commands.py` | New focused tests |
+| `tests/test_rag_pipeline.py`, `tests/test_formula_page.py` | Prompt and evidence regressions |
+| `README.md` | Installation, syntax, limits, availability, troubleshooting |
+
+No ingestion, Qdrant, dashboard, or data migration is required.
+
+## 10. Verification and acceptance
+
+### Real rendering fixtures
+
+| TeX input | Expected |
+| --- | --- |
+| `E = mc^2` | Sharp padded PNG in both themes |
+| `\int_0^\infty \frac{x^3}{e^x-1}\,dx = \frac{\pi^4}{15}` | Full integral/fraction/superscripts without clipping |
+| `\begin{aligned}a+b &= 10 \\ 2a-b &= 5\end{aligned}` | Two aligned rows |
+| `\begin{pmatrix}1 & 2 \\ 3 & 4\end{pmatrix}` | Matrix entries and parentheses |
+| `\begin{cases}x^2 & x\geq0 \\ -x & x<0\end{cases}` | Cases and inequalities |
+| `\text{mass}\;m=2\,\mathrm{kg}` | Text, spacing, units |
+| `\frac{1}{` or unknown command | Controlled failure, not an error image reported as success |
+| `\require{html}` or resource commands | Rejected without TeX-initiated network/filesystem loading |
+| Recursive definitions, huge dimensions, oversized input | Bounded failure and responsive bot |
+
+### Automated coverage
+
+- Scanner: mixed prose/math, multiple equations, escaping, prices, malformed/empty delimiters, code spans, backtick/tilde fences, and expression limits.
+- Delivery: all parts fit message limits; equation order and references survive chunking; plain answers spawn no renderer; disabled mode preserves text; missing permissions and upload rejections fall back correctly.
+- Bridge: busy admission, missing executable, failed probe, nonzero exit, malformed protocol/PNG, output overflow, timeout, cancellation, and shutdown. Prove children are reaped and capacity released.
+- Real renderer: decode PNGs and check dimensions; preserve a valid sibling after syntax failure; prove state isolation; verify a heartbeat coroutine runs during child execution.
+- Cogs with mocked Discord: defer before rendering, correct attachment arguments, controlled errors, no LLM calls for `/latex`, and both automatic output paths.
+- Prompt: enabled/disabled selection across all four routing modes, permission to use math without requiring it, literal TeX braces, and existing evidence/citation/reasoning-filter regressions.
+- PDF path: retain selection, containment, and complete-reference-formatting tests; verify source-page and generated-equation attachments can coexist.
+
+Unit tests must not require Discord, Ollama, Qdrant, or Node. Mark real-renderer tests separately: they may skip in a Python-only developer environment, but must run with the locked dependencies before shipping.
+
+Run focused tests during implementation, then the existing suite:
+
+~~~powershell
+python -m pytest tests/test_latex_renderer.py tests/test_math_messages.py tests/test_latex_commands.py tests/test_rag_pipeline.py tests/test_formula_page.py
+python -m pytest tests/
+~~~
+
+### Live acceptance checklist
+
+- [ ] `/latex` renders fixtures and handles malformed TeX.
+- [ ] Bound-channel answers and `/ask` both produce equations with readable explanations.
+- [ ] An ordinary question such as "How do I solve a quadratic equation?" receives an explanation and rendered math without mentioning LaTeX or using `/latex`.
+- [ ] Questions that do not benefit from mathematical notation receive normal text answers and start no rendering process.
+- [ ] Long answers preserve order, citations, and selected PDF pages.
+- [ ] Desktop/mobile and light/dark Discord views show legible, unclipped images.
+- [ ] Missing dependencies or Attach Files permission still allow text answers.
+- [ ] Concurrent requests and a hung renderer leave the bot responsive without orphaned children.
+- [ ] Offline rendering works after installation; all existing commands remain registered.
+- [ ] The suite passes and real rendering is verified on the deployment host.
+
+Completion means all three output paths work and failures preserve useful answers. Persistent workers, caching, broader package support, and document rendering are follow-up work only if measured requirements justify them.
