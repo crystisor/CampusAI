@@ -247,7 +247,7 @@ class OllamaClient:
         keep_alive: Optional[str] = None,
         think: Optional[bool] = None,
     ) -> AsyncGenerator[str, None]:
-        """Stream generated tokens from Ollama without thinking process."""
+        """Stream final-answer text from Ollama without exposing reasoning."""
         target_model = model or config.ollama.llm_model
 
         if keep_alive is None:
@@ -258,13 +258,22 @@ class OllamaClient:
 
         merged_options = self._generation_options(target_model, options)
 
+        use_chat = target_model == config.ollama.llm_model
         payload: Dict[str, Any] = {
             "model": target_model,
-            "prompt": prompt,
             "stream": True,
         }
-        if system:
-            payload["system"] = system
+        endpoint = "generate"
+        if use_chat:
+            endpoint = "chat"
+            payload["messages"] = []
+            if system:
+                payload["messages"].append({"role": "system", "content": system})
+            payload["messages"].append({"role": "user", "content": prompt})
+        else:
+            payload["prompt"] = prompt
+            if system:
+                payload["system"] = system
         if merged_options:
             payload["options"] = merged_options
         cleaned_keep_alive = self._clean_keep_alive(keep_alive)
@@ -275,25 +284,25 @@ class OllamaClient:
         payload["think"] = use_think
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            async with client.stream("POST", f"{self.base_url}/api/generate", json=payload) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line:
-                        continue
-                    try:
-                        import json
-                        chunk = json.loads(line)
-                        # Only yield final response content, omit thinking field
-                        token = chunk.get("response", "")
-                        if token and "</think>" not in token:
-                            yield token
-                        elif token and "</think>" in token:
-                            # Token contains </think>, yield only text after </think>
-                            post_think = token.split("</think>")[-1]
-                            if post_think:
-                                yield post_think
-                    except Exception:
-                        continue
+            async with asyncio.timeout(config.ollama.generation_timeout):
+                async with client.stream("POST", f"{self.base_url}/api/{endpoint}", json=payload) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if not line:
+                            continue
+                        try:
+                            chunk = json.loads(line)
+                            if chunk.get("error"):
+                                raise RuntimeError(f"Ollama generation failed: {chunk['error']}")
+                            # Chat keeps reasoning in a separate field. Never stream it.
+                            token = (
+                                chunk.get("message", {}).get("content", "")
+                                if use_chat else chunk.get("response", "")
+                            )
+                            if token:
+                                yield token
+                        except (ValueError, TypeError) as exc:
+                            raise RuntimeError("Ollama returned an invalid streaming response") from exc
 
     async def get_embedding(
         self,
