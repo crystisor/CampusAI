@@ -64,6 +64,7 @@ async def test_synthetic_preview_is_never_sent_to_ocr(tmp_path):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure,scan_text", [(False, ""), (True, "short"), (True, "")])
 async def test_hybrid_ingestion(tmp_path, monkeypatch, failure, scan_text):
+    monkeypatch.setattr(config.ingestion, "vision_enabled", False)
     monkeypatch.setattr(config.ingestion, "storage_dir", tmp_path)
     monkeypatch.setattr(config.ingestion, "ocr_min_text_chars", 80)
     monkeypatch.setattr(config.ingestion, "ocr_formula_pages", False)

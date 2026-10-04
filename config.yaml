@@ -5,23 +5,23 @@ discord:
 
 ollama:
   base_url: "http://localhost:11434"
-  llm_model: "Spark-X2.5-4b-Q8_0"
+  llm_model: "gemma4_e2b_q8:latest"
   llm_keep_alive: "-1"         # Keep permanently hot in GPU VRAM
   think: false                 # Prefer direct answers for interactive Discord requests
   llm_temperature: 0.2
-  llm_num_ctx: 16384
+  llm_num_ctx: 8192            # Shared by chat and vision to avoid reloading Gemma
   llm_top_p: 0.9
   llm_top_k: 40
   llm_repeat_penalty: 1.05
   llm_max_tokens: 1024         # Bound generation with Ollama num_predict
   router_model: "Arch-Router"
   router_num_gpu: 0            # Offload to CPU (avoids GPU VRAM evictions)
-  router_keep_alive: "30m"
+  router_keep_alive: "0"       # Load on demand to leave RAM for the bot and reranker
   router_temperature: 0.0
   router_max_tokens: 10        # Sent to Ollama as num_predict
   embedding_model: "bge-m3"
   embedding_num_gpu: 0         # Offload to CPU (avoids GPU VRAM evictions)
-  embedding_keep_alive: "30m"
+  embedding_keep_alive: "0"    # Release CPU RAM after each embedding batch
   request_timeout: 120.0
   generation_timeout: 90.0    # Overall chat deadline; request_timeout limits idle reads
 
@@ -55,7 +55,10 @@ ingestion:
   ocr_model: "glm-ocr-eot"
   ocr_min_text_chars: 80       # OCR pages below this non-whitespace character count
   ocr_formula_pages: true     # Preserve formula layout on detected math-heavy pages
-  ocr_keep_alive: "1m"       # Release OCR model after inactivity
+  ocr_keep_alive: "0"        # Release OCR after each request on the 8 GB GPU
+  vision_model: "gemma4_e2b_q8:latest"
+  vision_enabled: true
+  vision_max_tokens: 1024
   storage_dir: "storage/subjects"
   dpi: 200
   chunk_size: 900             # Target characters (within requested 800-1000 range)

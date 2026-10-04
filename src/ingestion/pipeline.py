@@ -9,9 +9,10 @@ from src.config import config
 from src.ingestion.pdf_processor import PDFProcessor, PDFPageData
 from src.ingestion.layout_engine import DocumentLayoutEngine
 from src.ingestion.ocr_engine import GLMOCREngine
+from src.ingestion.vision_engine import PageVisionEngine
 from src.rag.chunker import MarkdownFormulaChunker
 from src.rag.qdrant_manager import QdrantManager
-from src.core.ollama_client import OllamaClient
+from src.core.ollama_client import EmptyImageResultError, OllamaClient
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ ProgressCallback = Callable[[Dict[str, Any]], Awaitable[None]]
 class IngestionPipeline:
     """
     End-to-end PDF ingestion pipeline:
-    PDF text extraction -> selective GLM-OCR -> Markdown -> embeddings -> index.
+    PDF text -> selective GLM-OCR and Gemma vision -> Markdown -> embeddings -> index.
     """
 
     def __init__(
@@ -32,11 +33,13 @@ class IngestionPipeline:
         chunker: Optional[MarkdownFormulaChunker] = None,
         qdrant_manager: Optional[QdrantManager] = None,
         ollama_client: Optional[OllamaClient] = None,
+        vision_engine: Optional[PageVisionEngine] = None,
     ):
         self.pdf_processor = pdf_processor or PDFProcessor()
         self.layout_engine = layout_engine or DocumentLayoutEngine()
         self.ollama = ollama_client or OllamaClient()
         self.ocr_engine = ocr_engine or GLMOCREngine(ollama_client=self.ollama)
+        self.vision_engine = vision_engine or PageVisionEngine(self.ollama)
         self.chunker = chunker or MarkdownFormulaChunker(
             chunk_size=config.ingestion.chunk_size,
             chunk_overlap=config.ingestion.chunk_overlap
@@ -88,9 +91,11 @@ class IngestionPipeline:
         await emit("layout", 35, f"Checking text extraction across {num_pages} pages...")
         all_page_markdowns: List[str] = []
         ocr_pages: List[int] = []
+        vision_pages: List[int] = []
         warnings: List[str] = []
 
         for p in pages_data:
+            empty_ocr_error = None
             reason = self.ocr_engine.ocr_reason(p.text)
             processed_page_md = self.ocr_engine.process_page_text(p.text)
             if reason:
@@ -103,11 +108,37 @@ class IngestionPipeline:
                 except Exception as exc:
                     warning = f"Page {p.page_number}: OCR failed ({exc})."
                     if not p.text.strip():
-                        raise RuntimeError(warning + " No extracted text is available; ingestion stopped.") from exc
-                    warning += " Kept the PDF text layer."
+                        # A photograph or unlabelled diagram may have no text.
+                        # Only an empty OCR result can fall through to vision;
+                        # transport errors and truncation must still stop a scan.
+                        if not isinstance(exc, EmptyImageResultError) or not self.vision_engine.needs_vision(p):
+                            raise RuntimeError(warning + " No extracted text is available; ingestion stopped.") from exc
+                        empty_ocr_error = exc
+                        warning += " Checking for visual content without text."
+                    else:
+                        warning += " Kept the PDF text layer."
                     warnings.append(warning)
                     logger.warning(warning)
                     await emit("ocr", 35, warning)
+
+            if self.vision_engine.needs_vision(p):
+                await emit("ocr", 35 + int(25 * (p.page_number - 1) / max(num_pages, 1)),
+                           f"Interpreting visuals on page {p.page_number} with Gemma.")
+                try:
+                    description = await self.vision_engine.describe_page(p)
+                    if description:
+                        processed_page_md += "\n\n## Visual interpretation (AI-generated)\n\n" + description
+                        vision_pages.append(p.page_number)
+                except Exception as exc:
+                    warning = f"Page {p.page_number}: visual interpretation failed ({exc})."
+                    warnings.append(warning)
+                    logger.warning(warning)
+                    await emit("ocr", 35, warning)
+
+            if empty_ocr_error and not processed_page_md.strip():
+                raise RuntimeError(
+                    f"Page {p.page_number}: neither text nor visual content was recovered; ingestion stopped."
+                ) from empty_ocr_error
 
             page_md_content = f"# {doc_name} — Page {p.page_number}\n\n{processed_page_md}\n"
             
@@ -118,7 +149,8 @@ class IngestionPipeline:
 
             all_page_markdowns.append(page_md_content)
 
-        await emit("ocr", 60, f"Processed {num_pages} pages; {len(ocr_pages)} used GLM-OCR, {len(warnings)} warnings.")
+        await emit("ocr", 60, f"Processed {num_pages} pages; {len(ocr_pages)} used GLM-OCR, "
+                   f"{len(vision_pages)} have visual descriptions, {len(warnings)} warnings.")
 
         # 4. Save combined document markdown
         await emit("markdown", 70, f"Compiling structured Markdown...")
@@ -184,5 +216,6 @@ class IngestionPipeline:
             "chunks_count": len(all_chunks),
             "markdown_path": str(combined_doc_path),
             "ocr_pages": ocr_pages,
+            "vision_pages": vision_pages,
             "warnings": warnings,
         }

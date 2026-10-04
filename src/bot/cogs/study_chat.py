@@ -18,7 +18,7 @@ from src.bot.math_messages import Part, prepare_answer, send_study_parts, MENTIO
 logger = logging.getLogger(__name__)
 
 
-def format_references(contexts: list[dict]) -> str:
+def format_references(contexts: list[dict], page_links: Optional[dict[tuple[str, str], str]] = None) -> str:
     """List every source passed to answer generation, grouping repeated PDF pages."""
     course_pages: dict[str, list[str]] = {}
     web_sources: list[str] = []
@@ -27,9 +27,13 @@ def format_references(contexts: list[dict]) -> str:
         if context.get("source") == "course_material":
             document = str(metadata.get("document_name") or "Unknown course material")
             number = metadata.get("course_number")
-            label = f"Course {number} ({document})" if number is not None else f"Course: {document}"
+            display_document = discord.utils.escape_markdown(document)
+            label = f"Course {number} ({display_document})" if number is not None else f"Course: {display_document}"
             page = metadata.get("page_number")
             page_label = str(page) if page is not None else "unknown"
+            if page_links is not None:
+                url = page_links.get((document, page_label))
+                page_label = f"[{page_label}]({url})" if url else f"{page_label} (preview unavailable)"
             pages = course_pages.setdefault(label, [])
             if page_label not in pages:
                 pages.append(page_label)
@@ -83,10 +87,56 @@ async def render_formula_page(source: tuple[Path, int]) -> discord.File:
     output.seek(0)
     return discord.File(output, filename=f"{pdf.stem}_page_{page_number}.png")
 
+
+async def publish_source_pages(message: discord.Message, contexts: list[dict], subject_id: str) -> dict[tuple[str, str], str]:
+    """Publish exact PDF pages and retain durable, channel-scoped message links."""
+    links: dict[tuple[str, str], str] = {}
+    if message.guild.me is not None and not message.channel.permissions_for(message.guild.me).attach_files:
+        return links
+    root = config.ingestion.storage_dir.resolve()
+    subject_dir = (root / subject_id).resolve()
+    if not subject_dir.is_relative_to(root):
+        return links
+    raw_dir = (subject_dir / "raw").resolve()
+    if not raw_dir.is_relative_to(subject_dir):
+        return links
+    seen = set()
+    for context in contexts:
+        metadata = context.get("metadata") or {}
+        document, page = metadata.get("document_name"), metadata.get("page_number")
+        if (context.get("source") != "course_material" or not isinstance(document, str)
+                or not document or type(page) is not int or page < 1):
+            continue
+        key = (document, str(page))
+        if key in seen:
+            continue
+        seen.add(key)
+        pdf = (raw_dir / f"{document}.pdf").resolve()
+        if not pdf.is_relative_to(raw_dir) or not pdf.is_file():
+            continue
+        file = None
+        try:
+            file = await render_formula_page((pdf, page))
+            if file.fp.seek(0, 2) > message.guild.filesize_limit:
+                continue
+            file.fp.seek(0)
+            source_message = await message.channel.send(
+                f"**Course:** {discord.utils.escape_markdown(document)[:1500]} — **Slide/page {page}**",
+                file=file, allowed_mentions=MENTIONS,
+            )
+            links[key] = source_message.jump_url
+        except Exception:
+            logger.warning("Could not publish source page %s of %s", page, document, exc_info=True)
+        finally:
+            if file:
+                file.close()
+                file.fp.close()
+    return links
+
 class StudyChatCog(commands.Cog, name="StudyChat"):
     """
     Handles student questions in subject-bound channels.
-    Routes queries through RAGPipeline (Arch-Router -> RAG/Web -> bge-reranker -> Spark-X2.5-4b-Q8_0).
+    Routes queries through RAGPipeline (Arch-Router -> RAG/Web -> bge-reranker -> gemma4_e2b_q8:latest).
     """
 
     def __init__(self, bot: commands.Bot):
@@ -157,11 +207,9 @@ class StudyChatCog(commands.Cog, name="StudyChat"):
                 answer = clean_llm_response(raw_answer)
                 decision = result.get("decision", "DIRECT")
                 top_contexts = result.get("top_contexts", [])
-                formula_page = source_formula_page(user_query, top_contexts, subject_id)
                 parts = await prepare_answer(
                     answer, self.bot.latex_renderer,
                     header=f"**[{subject_name}]** `Intent: {decision}`\n\n",
-                    footer=format_references(top_contexts),
                 )
                 # The live text is a preview. Replace it with the established
                 # final delivery so equation rendering, citations and splitting remain intact.
@@ -172,25 +220,11 @@ class StudyChatCog(commands.Cog, name="StudyChat"):
                         logger.debug("Could not remove streamed preview message %s", streamed_message.id)
                 if not await send_study_parts(message, parts):
                     return
-                if formula_page:
-                    formula_file = None
-                    try:
-                        can_attach = message.guild.me is None or message.channel.permissions_for(message.guild.me).attach_files
-                        if not can_attach:
-                            return
-                        formula_file = await render_formula_page(formula_page)
-                        if formula_file.fp.seek(0, 2) <= message.guild.filesize_limit:
-                            formula_file.fp.seek(0)
-                            await message.channel.send(
-                                f"**Source PDF page:** {formula_page[0].name}, page {formula_page[1]}",
-                                file=formula_file, allowed_mentions=MENTIONS,
-                            )
-                    except Exception as exc:
-                        logger.warning("Could not deliver source PDF page in channel %s (%s)", message.channel.id, type(exc).__name__)
-                    finally:
-                        if formula_file:
-                            formula_file.close()
-                            formula_file.fp.close()
+                page_links = await publish_source_pages(message, top_contexts, subject_id)
+                references = format_references(top_contexts, page_links)
+                if references:
+                    source_parts = await prepare_answer(references, None)
+                    await send_study_parts(message, source_parts)
 
             except Exception as e:
                 logger.error(f"Error handling message in #{message.channel.name}: {e}", exc_info=True)

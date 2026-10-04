@@ -11,6 +11,11 @@ from src.config import config
 
 logger = logging.getLogger(__name__)
 
+
+class EmptyImageResultError(ValueError):
+    """The image request completed without recognized content."""
+
+
 def clean_llm_response(text: str) -> str:
     """
     Strips internal reasoning tokens, thinking process tags (<think>...</think>, <thought>, etc.),
@@ -150,8 +155,7 @@ class OllamaClient:
         }
         if system:
             payload["system"] = system
-        # Spark's chat endpoint separates reasoning, while /generate can return
-        # an untagged continuation of the template's opening <think> token.
+        # The chat endpoint separates reasoning from the final answer.
         use_chat = target_model == config.ollama.llm_model
         endpoint = "chat" if use_chat else "generate"
         if use_chat:
@@ -215,27 +219,44 @@ class OllamaClient:
             raw_response = data.get("message", {}).get("content", "") if use_chat else data.get("response", "")
             return clean_llm_response(raw_response)
 
-    async def recognize_image(self, image_path: Path, model: str, keep_alive: str) -> str:
-        """Recognize a rendered page using Ollama's vision chat API."""
+    async def recognize_image(
+        self, image_path: Path, model: str, keep_alive: str, *,
+        prompt: str = "Text Recognition:",
+        options: Optional[Dict[str, Any]] = None,
+        system: Optional[str] = None,
+        think: Optional[bool] = None,
+        response_format: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Read an actual image; default to GLM-OCR's transcription prompt."""
         payload = {
             "model": model,
             "messages": [{
-                "role": "user", "content": "Text Recognition:",
+                "role": "user", "content": prompt,
                 "images": [base64.b64encode(image_path.read_bytes()).decode("ascii")],
             }],
             "stream": False,
             "keep_alive": self._clean_keep_alive(keep_alive),
-            "options": {"temperature": 0, "num_ctx": 8192, "num_predict": 4096},
+            "options": options or {"temperature": 0, "num_ctx": 8192, "num_predict": 4096},
         }
+        if system:
+            payload["messages"].insert(0, {"role": "system", "content": system})
+        if think is not None:
+            payload["think"] = think
+        if response_format is not None:
+            payload["format"] = response_format
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(f"{self.base_url}/api/chat", json=payload)
             response.raise_for_status()
             data = response.json()
+        label = "OCR" if prompt == "Text Recognition:" else "Vision"
+        if data.get("error"):
+            raise RuntimeError(f"{label} failed: {data['error']}")
         if data.get("done_reason") == "length":
-            raise ValueError("OCR output was truncated")
-        text = data.get("message", {}).get("content", "").strip()
+            raise ValueError(f"{label} output was truncated")
+        raw_text = data.get("message", {}).get("content") or ""
+        text = raw_text.strip() if label == "OCR" else clean_llm_response(raw_text)
         if not text:
-            raise ValueError("OCR returned no text")
+            raise EmptyImageResultError(f"{label} returned no text")
         return text
 
     async def generate_stream(
@@ -372,11 +393,10 @@ class OllamaClient:
     async def warm_models(self) -> Dict[str, bool]:
         """
         Pre-warms models into their designated memory tiers:
-        - LLM (Spark-X2.5-4b) into GPU VRAM (keep_alive: -1)
-        - Arch-Router into CPU RAM (num_gpu: 0, keep_alive: 30m)
-        - bge-m3 into CPU RAM (num_gpu: 0, keep_alive: 30m)
+        - Configured chat/vision LLM into GPU VRAM (keep_alive: -1)
+        - Arch-Router and bge-m3 on CPU with configured retention
         """
-        logger.info("Pre-warming models for zero-latency Discord operation...")
+        logger.info("Checking models with configured memory placement and retention...")
         status = {"llm": False, "router": False, "embedding": False}
 
         # 1. Warm LLM on GPU
@@ -405,7 +425,7 @@ class OllamaClient:
                 think=False,
             )
             status["router"] = True
-            logger.info(f"Router '{config.ollama.router_model}' pinned to CPU successfully.")
+            logger.info(f"Router '{config.ollama.router_model}' tested on CPU successfully.")
         except Exception as e:
             logger.warning(f"Could not warm Router '{config.ollama.router_model}': {e}")
 
@@ -419,7 +439,7 @@ class OllamaClient:
                 keep_alive=config.ollama.embedding_keep_alive,
             )
             status["embedding"] = True
-            logger.info(f"Embedding '{config.ollama.embedding_model}' pinned to CPU successfully.")
+            logger.info(f"Embedding '{config.ollama.embedding_model}' tested on CPU successfully.")
         except Exception as e:
             logger.warning(f"Could not warm Embedding '{config.ollama.embedding_model}': {e}")
 
