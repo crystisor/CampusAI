@@ -10,11 +10,12 @@ logger = logging.getLogger(__name__)
 
 class PDFPageData:
     def __init__(self, page_number: int, text: str, image_path: Optional[Path] = None,
-                 image_is_rendered: bool = False):
+                 image_is_rendered: bool = False, has_visual_content: bool = False):
         self.page_number = page_number
         self.text = text
         self.image_path = image_path
         self.image_is_rendered = image_is_rendered
+        self.has_visual_content = has_visual_content
 
 class PDFProcessor:
     """
@@ -56,6 +57,18 @@ class PDFProcessor:
             except Exception as exc:
                 logger.warning("Text extraction failed on page %s; attempting OCR: %s", page_num, exc)
                 text = ""
+            try:
+                # Inspect the content stream directly: extract_text can return
+                # before visiting operators on pages without font resources.
+                contents = page.get_contents()
+                has_visual_content = contents is not None and any(
+                    operator in {b"Do", b"INLINE IMAGE", b"S", b"s", b"f", b"F",
+                                 b"f*", b"B", b"B*", b"b", b"b*", b"sh"}
+                    for _, operator in contents.operations
+                )
+            except Exception as exc:
+                logger.warning("Visual detection failed on page %s; inspecting render: %s", page_num, exc)
+                has_visual_content = True
             
             image_path: Optional[Path] = None
             if output_image_dir:
@@ -73,6 +86,7 @@ class PDFProcessor:
             pages_data.append(PDFPageData(
                 page_number=page_num, text=text, image_path=image_path,
                 image_is_rendered=pdf_images[idx] is not None and image_path is not None,
+                has_visual_content=has_visual_content,
             ))
 
         return pages_data

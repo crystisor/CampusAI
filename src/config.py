@@ -17,23 +17,23 @@ class DiscordSettings(BaseModel):
 
 class OllamaSettings(BaseModel):
     base_url: str = Field(default_factory=lambda: os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))
-    llm_model: str = "Spark-X2.5-4b-Q8_0"
+    llm_model: str = "gemma4_e2b_q8:latest"
     llm_keep_alive: str = "-1"  # Permanently keep LLM hot in GPU VRAM
     think: bool = False         # Controls model thinking; output filtering is independent
     llm_temperature: float = 0.2
-    llm_num_ctx: int = 4096
+    llm_num_ctx: int = 8192
     llm_top_p: float = 0.9
     llm_top_k: int = 40
     llm_repeat_penalty: float = 1.05
     llm_max_tokens: int = Field(default=1024, gt=0)
     router_model: str = "Arch-Router"
     router_num_gpu: int = 0     # Offload to CPU
-    router_keep_alive: str = "30m"
+    router_keep_alive: str = "0"
     router_temperature: float = 0.0
     router_max_tokens: int = 10
     embedding_model: str = "bge-m3"
     embedding_num_gpu: int = 0  # Offload to CPU
-    embedding_keep_alive: str = "30m"
+    embedding_keep_alive: str = "0"
     request_timeout: float = 120.0
     generation_timeout: float = Field(default=90.0, gt=0, allow_inf_nan=False)
 
@@ -65,10 +65,13 @@ class SearchSettings(BaseModel):
 
 class IngestionSettings(BaseModel):
     layout_model: str = "pp-doclayoutV3"
-    ocr_model: str = "glm-ocr"
+    ocr_model: str = "glm-ocr-eot"
     ocr_min_text_chars: int = Field(default=80, ge=0)
     ocr_formula_pages: bool = False
-    ocr_keep_alive: str = "1m"
+    ocr_keep_alive: str = "0"
+    vision_model: str = "gemma4_e2b_q8:latest"
+    vision_enabled: bool = True
+    vision_max_tokens: int = Field(default=1024, gt=0)
     storage_dir: Path = BASE_DIR / "storage" / "subjects"
     dpi: int = 200
     chunk_size: int = 900

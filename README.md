@@ -11,13 +11,13 @@ The system is designed around privacy, local inference, and efficient retrieval 
 ## ✨ Features
 
 * 🤖 **Discord AI Assistant** — Ask questions directly from Discord.
-* 🧠 **Local LLM inference** — Powered by `Spark-X2.5-4b-Q8_0`.
+* 🧠 **Local LLM inference** — Powered by `gemma4_e2b_q8:latest`.
 * 📚 **RAG-based course knowledge** — Course material is indexed in Qdrant.
 * 🔎 **Semantic search** — Uses `bge-m3` embeddings.
 * 🎯 **Reranking** — Uses `bge-reranker-v2-m3` to select the most relevant context.
 * 🌐 **Web search** — Supports questions requiring information outside the indexed course material.
 * 🧭 **Intent routing** — `Arch-Router` determines how each query should be handled.
-* 👁️ **Visual document processing** — `glm-ocr` processes visual content and documents.
+* 👁️ **Visual document processing** — GLM-OCR transcribes scanned text; Gemma 4 interprets charts, diagrams and images on PDF pages.
 * 📄 **PDF ingestion** — Upload and process course material through the web dashboard.
 * 🖥️ **Management dashboard** — Monitor subjects, documents, hardware, VRAM, and vector database status.
 * 🔒 **Local-first architecture** — AI inference and vector storage can run entirely on your own hardware.
@@ -27,6 +27,26 @@ The system is designed around privacy, local inference, and efficient retrieval 
 # 🏗️ Architecture
 
 CampusAI uses a modular architecture consisting of:
+
+### Clickable course sources in Discord
+
+Course-based answers include a **Sources** list with the document name and a
+separate clickable link for each retrieved slide/page. For example,
+`Course: Paper_Unit_2.3_Extreme_Programming — Slides/pages 16, 14` has individual
+links on `16` and `14`.
+
+The bot posts an image of each exact original PDF page in the same channel.
+Clicking a page number jumps to that source message, where the image can be
+opened at full size. Links remain usable while the source messages exist and
+the student has channel access; no publicly hosted dashboard is required.
+Page numbers use the PDF's one-based page order. Repeated references to the
+same page share one preview per answer, including answers that combine course
+material with web results.
+
+The bot needs **Attach Files**, and the original PDF must remain in the subject's
+`raw` storage directory. Missing or unrenderable pages, oversized attachments,
+and failed uploads are labeled `preview unavailable`; the citation stays visible.
+The sources list reflects the passages supplied to answer generation.
 
 ### Backend
 
@@ -48,8 +68,9 @@ CampusAI uses a modular architecture consisting of:
 
 | Component           | Model                | Purpose                               |
 | ------------------- | -------------------- | ------------------------------------- |
-| **LLM**             | `Spark-X2.5-4b-Q8_0` | Answer generation                     |
-| **Visual Model**    | `glm-ocr`            | OCR and visual document understanding |
+| **LLM**             | `gemma4_e2b_q8:latest` | Answer generation                     |
+| **Visual Model**    | `gemma4_e2b_q8:latest` | Chart, diagram and image interpretation |
+| **OCR**             | `glm-ocr-eot`         | Scanned text and formula transcription |
 | **Embedding Model** | `bge-m3`             | Document and query embeddings         |
 | **Reranker**        | `bge-reranker-v2-m3` | Context relevance ranking             |
 | **Router**          | `Arch-Router`        | Query intent classification           |
@@ -88,7 +109,7 @@ Every question is first processed by **Arch-Router**, which determines the appro
           │                       │
           └───────────────────────┤
                                   ▼
-                         Spark-X2.5-4b-Q8_0
+                         gemma4_e2b_q8:latest
                                   │
                                   ▼
                            Discord Reply
@@ -311,7 +332,7 @@ Course material follows a retrieval pipeline before being provided to the LLM.
 PDF / Course Material
         │
         ▼
-     GLM-OCR
+  GLM-OCR + Gemma vision
         │
         ▼
 Document Processing
@@ -334,7 +355,7 @@ BGE Reranker v2 M3
  Relevant Context
         │
         ▼
-Spark-X2.5-4b-Q8_0
+gemma4_e2b_q8:latest
         │
         ▼
     Final Answer
@@ -350,20 +371,37 @@ PDF ingestion uses the PDF text layer by default. Pages with fewer than 80
 non-whitespace characters are sent to the configured OCR model through
 Ollama. Keep Ollama running during ingestion.
 Actual page rendering requires Poppler (`pdfinfo` and `pdftoppm` on PATH);
-generated text previews are never used as OCR input.
+generated text previews are never used as OCR or vision input.
 
 The `ingestion` settings in `config.yaml` control this behavior:
 
 * `ocr_min_text_chars: 80`: minimum usable text length before OCR is requested.
 * `ocr_formula_pages: false`: enable to also OCR pages containing math-heavy
   lines. This is a heuristic; it cannot detect every missing image-based formula.
-* `ocr_keep_alive: "1m"`: keep the OCR model loaded for one minute after a request.
+* `ocr_keep_alive: "0"`: unload OCR after each request to leave room on an 8 GB GPU.
+* `vision_enabled: true`: inspect pages with PDF images, form objects, painted
+  vector graphics, or little extracted text. This is a candidate heuristic;
+  Gemma returns a structured assessment and skips prose-only pages and decoration.
+* `vision_model: "gemma4_e2b_q8:latest"`: use the same Gemma model for chat and vision.
+* `vision_max_tokens: 1024`: bound visual descriptions; truncated output is rejected.
+
+Gemma requires both the text GGUF and its matching multimodal projector. Check
+`ollama show gemma4_e2b_q8:latest` for the `vision` capability before ingestion.
+A text-only GGUF import will reject images even though the Gemma family is multimodal.
+Chat and vision share an 8K context (`ollama.llm_num_ctx`) and disable thinking.
+Router, embeddings and reranker remain on CPU. Router and embedding requests use
+`keep_alive: "0"` to release RAM after each call on this 16 GB machine; this trades
+some model loading time for lower idle memory use. Gemma remains loaded for chat.
 
 OCR output is saved directly as page Markdown and then chunked and embedded.
 If OCR fails, available PDF text is retained with a progress warning. If a page
-has no extracted text and OCR fails or returns empty output, ingestion stops
-before indexing. This can also happen for a completely blank page. Results
-include `ocr_pages` and `warnings`. Re-upload previously parsed PDFs to apply OCR;
+has no extracted text and OCR fails, ingestion stops before indexing. An empty
+OCR result can still be indexed if Gemma recovers a meaningful image or diagram
+description; otherwise ingestion stops, including for a completely blank page. Results
+include `ocr_pages`, `vision_pages` and `warnings`. Visual descriptions are appended
+as AI-generated interpretation to page Markdown and indexed with the page's source
+metadata. Vision failures retain available text and report a warning.
+Re-upload previously parsed PDFs to apply OCR and visual interpretation;
 existing documents are not automatically reprocessed.
 
 OCR requests use an 8K context and a 4K output limit. Truncated responses are
@@ -418,8 +456,9 @@ A simplified overview of the project structure:
 | **ASGI Server**         | Uvicorn                 |
 | **Frontend**            | HTML + CSS + JavaScript |
 | **Vector Database**     | Qdrant                  |
-| **LLM**                 | Spark-X2.5-4b-Q8_0      |
-| **Vision / OCR**        | GLM-OCR                 |
+| **LLM**                 | gemma4_e2b_q8:latest      |
+| **Vision**              | gemma4_e2b_q8:latest     |
+| **OCR**                 | GLM-OCR (`glm-ocr-eot`)  |
 | **Embeddings**          | BGE-M3                  |
 | **Reranking**           | BGE Reranker v2 M3      |
 | **Intent Router**       | Arch-Router             |

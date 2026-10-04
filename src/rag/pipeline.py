@@ -80,7 +80,7 @@ class RAGPipeline:
     1. Intent Classification (Arch-Router)
     2. Retrieval (Qdrant bge-m3 / Web Search)
     3. Cross-Encoder Reranking (bge-reranker-v2-m3 -> Top 4-5)
-    4. Synthesis (Spark-X2.5-4b-Q8_0)
+    4. Synthesis (gemma4_e2b_q8:latest)
     """
 
     def __init__(
