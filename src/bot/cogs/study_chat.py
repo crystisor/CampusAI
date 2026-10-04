@@ -1,6 +1,7 @@
 import logging
 import re
 import asyncio
+from time import monotonic
 from io import BytesIO
 from pathlib import Path
 from pdf2image import convert_from_path
@@ -113,13 +114,43 @@ class StudyChatCog(commands.Cog, name="StudyChat"):
 
         # Indicate typing while performing routing, retrieval, reranking, and generation
         async with message.channel.typing():
+            stream_messages: list[discord.Message] = []
             try:
                 subject_name = subject_id.replace("_", " ").title()
+                header = f"**[{subject_name}]** `Generating answer...`\n\n"
+                stream_message = await message.reply(header, allowed_mentions=MENTIONS)
+                stream_messages.append(stream_message)
+                streamed = ""
+                last_edit = monotonic()
+
+                async def show_token(token: str) -> None:
+                    nonlocal stream_message, streamed, last_edit
+                    # Keep each Discord message below its 2,000 character limit.
+                    while token:
+                        room = 1850 - len(streamed)
+                        if room <= 0:
+                            stream_message = await message.channel.send(
+                                streamed, allowed_mentions=MENTIONS
+                            )
+                            stream_messages.append(stream_message)
+                            streamed = ""
+                            room = 1850
+                        streamed += token[:room]
+                        token = token[room:]
+                    now = monotonic()
+                    if now - last_edit >= 0.8:
+                        await stream_message.edit(
+                            content=(header + streamed) if stream_message is stream_messages[0] else streamed,
+                            allowed_mentions=MENTIONS,
+                        )
+                        last_edit = now
+
                 result = await self.pipeline.process_query(
                     query=user_query,
                     subject_id=subject_id,
                     subject_name=subject_name,
                     render_math=self.bot.latex_renderer.auto_available,
+                    on_token=show_token,
                 )
 
                 raw_answer = result.get("answer", "I could not generate an explanation at this time.")
@@ -132,6 +163,13 @@ class StudyChatCog(commands.Cog, name="StudyChat"):
                     header=f"**[{subject_name}]** `Intent: {decision}`\n\n",
                     footer=format_references(top_contexts),
                 )
+                # The live text is a preview. Replace it with the established
+                # final delivery so equation rendering, citations and splitting remain intact.
+                for streamed_message in stream_messages:
+                    try:
+                        await streamed_message.delete()
+                    except discord.HTTPException:
+                        logger.debug("Could not remove streamed preview message %s", streamed_message.id)
                 if not await send_study_parts(message, parts):
                     return
                 if formula_page:
@@ -156,6 +194,11 @@ class StudyChatCog(commands.Cog, name="StudyChat"):
 
             except Exception as e:
                 logger.error(f"Error handling message in #{message.channel.name}: {e}", exc_info=True)
+                for streamed_message in stream_messages:
+                    try:
+                        await streamed_message.delete()
+                    except discord.HTTPException:
+                        pass
                 await send_study_parts(message, [Part("An error occurred while processing your study query.")])
 
 async def setup(bot: commands.Bot):

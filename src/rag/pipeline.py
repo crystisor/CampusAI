@@ -3,7 +3,7 @@ import json
 import logging
 import re
 from time import perf_counter
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Callable, Awaitable
 from src.core.ollama_client import OllamaClient, clean_llm_response
 from src.core.router import IntentRouter, RoutingDecision
 from src.core.reranker import Reranker, RerankerCandidate
@@ -104,6 +104,7 @@ class RAGPipeline:
         subject_name: Optional[str] = None,
         *,
         render_math: bool = False,
+        on_token: Optional[Callable[[str], Awaitable[None]]] = None,
     ) -> Dict[str, Any]:
         """
         Executes full query pipeline and returns response with metadata.
@@ -227,13 +228,21 @@ class RAGPipeline:
 
         # 6. Use configured thinking; filter internal reasoning before returning the answer.
         try:
-            response_text = await self.ollama.generate(
-                prompt=final_user_prompt,
-                model=config.ollama.llm_model,
-                system=system_prompt,
-                keep_alive=config.ollama.llm_keep_alive,
-                think=config.ollama.think,
-            )
+            generation_args = {
+                "prompt": final_user_prompt,
+                "model": config.ollama.llm_model,
+                "system": system_prompt,
+                "keep_alive": config.ollama.llm_keep_alive,
+                "think": config.ollama.think,
+            }
+            if on_token and hasattr(self.ollama, "generate_stream"):
+                pieces: List[str] = []
+                async for token in self.ollama.generate_stream(**generation_args):
+                    pieces.append(token)
+                    await on_token(token)
+                response_text = "".join(pieces)
+            else:
+                response_text = await self.ollama.generate(**generation_args)
         except TimeoutError:
             logger.warning("Answer generation exceeded %.1fs", config.ollama.generation_timeout)
             response_text = "The answer model exceeded its time limit. Please try again."
