@@ -1,5 +1,8 @@
+import asyncio
 import json
 import logging
+import re
+from time import perf_counter
 from typing import List, Dict, Any, Optional, Tuple
 from src.core.ollama_client import OllamaClient, clean_llm_response
 from src.core.router import IntentRouter, RoutingDecision
@@ -33,8 +36,14 @@ Accuracy and evidence:
   silently repair ambiguous OCR symbols or fill gaps in formulas with guesses.
 - If ambiguity changes the answer, ask one focused clarification. Otherwise state any necessary
   assumption briefly and proceed. Correct false premises politely instead of agreeing with them.
+- When explaining a table, cover every distinct row or category in the supplied table, including
+  categories embedded on the same text line as their definition. Preserve its distinctions;
+  do not announce a category count unless it matches all of the categories you describe.
 
 Math and explanations:
+- Preserve the source's variable names, summation bounds, and denominators when explaining
+  a formula. Define each symbol from the passage containing that formula; do not substitute
+  definitions from another equation or introduce an unexplained index bound.
 - State relevant conditions, define variables, preserve units, and distinguish exact results
   from approximations. Include essential calculation steps or a concise justification when
   useful; check signs, arithmetic, units, and whether the result answers the question.
@@ -100,15 +109,41 @@ class RAGPipeline:
         Executes full query pipeline and returns response with metadata.
         """
         sub_name = subject_name or subject_id
+        started = perf_counter()
+
+        # A numbered caption is an explicit course reference. Resolve it before
+        # semantic ranking, which can score short "explain table N" queries poorly.
+        table_reference = re.search(r"\btable\s+(\d+)\b", query, re.IGNORECASE)
+        exact_candidates: List[RerankerCandidate] = []
+        if table_reference:
+            try:
+                exact_candidates = await self.qdrant.find_table(subject_id, table_reference.group(1))
+            except Exception:
+                logger.warning("Table caption lookup failed; using semantic retrieval", exc_info=True)
         
         # 1. Routing classification
-        decision, route_reason = await self.router.route(query, subject_name=sub_name)
+        if exact_candidates:
+            decision, route_reason = RoutingDecision.RAG, "Exact table caption"
+            documents = sorted({c.metadata.get("document_name", "Unknown Document") for c in exact_candidates})
+            if len(documents) > 1:
+                named_documents = [name for name in documents if name.casefold() in query.casefold()]
+                if len(named_documents) == 1:
+                    exact_candidates = [c for c in exact_candidates if c.metadata.get("document_name") == named_documents[0]]
+                else:
+                    return {
+                        "answer": f"I found Table {table_reference.group(1)} in multiple documents. Which one do you mean?\n"
+                                  + "\n".join(f"- {name}" for name in documents),
+                        "decision": decision.value, "route_reason": route_reason, "top_contexts": [],
+                    }
+            logger.info("Found %d exact table caption passages", len(exact_candidates))
+        else:
+            decision, route_reason = await self.router.route(query, subject_name=sub_name)
         logger.info(f"Routed query '{query[:40]}...' to {decision.value} ({route_reason})")
 
         candidates: List[RerankerCandidate] = []
 
         # 2. Retrieval according to decision
-        if decision in [RoutingDecision.RAG, RoutingDecision.HYBRID]:
+        if not exact_candidates and decision in [RoutingDecision.RAG, RoutingDecision.HYBRID]:
             # Retrieve from Qdrant
             try:
                 query_vector = await self.ollama.get_embedding(
@@ -136,11 +171,26 @@ class RAGPipeline:
                 logger.error(f"Web search retrieval error: {e}")
 
         # 3. Rerank to top 4-5 items
-        top_candidates: List[RerankerCandidate] = []
+        top_candidates: List[RerankerCandidate] = exact_candidates[:config.reranker.top_k]
         if candidates:
             # Explicitly select top 4-5 as specified
-            top_candidates = self.reranker.rerank(query, candidates, top_k=config.reranker.top_k)
+            top_candidates = await asyncio.to_thread(
+                self.reranker.rerank, query, candidates, top_k=config.reranker.top_k
+            )
             logger.info(f"Reranked {len(candidates)} candidates down to top {len(top_candidates)}")
+
+        logger.info("Retrieval and reranking completed in %.2fs", perf_counter() - started)
+        if decision != RoutingDecision.DIRECT and not top_candidates:
+            logger.warning("No usable references for route %s; skipping generation", decision.value)
+            return {
+                "answer": (
+                    "I couldn't retrieve a usable passage for this question. "
+                    "Please give the document title and page number, or paste the relevant passage."
+                ),
+                "decision": decision.value,
+                "route_reason": route_reason,
+                "top_contexts": [],
+            }
 
         # 4. Keep evidence and the question separate, with explicit citation metadata.
         references = [
@@ -176,16 +226,22 @@ class RAGPipeline:
         )
 
         # 6. Use configured thinking; filter internal reasoning before returning the answer.
-        response_text = await self.ollama.generate(
-            prompt=final_user_prompt,
-            model=config.ollama.llm_model,
-            system=system_prompt,
-            keep_alive=config.ollama.llm_keep_alive,
-            think=config.ollama.think,
-        )
+        try:
+            response_text = await self.ollama.generate(
+                prompt=final_user_prompt,
+                model=config.ollama.llm_model,
+                system=system_prompt,
+                keep_alive=config.ollama.llm_keep_alive,
+                think=config.ollama.think,
+            )
+        except TimeoutError:
+            logger.warning("Answer generation exceeded %.1fs", config.ollama.generation_timeout)
+            response_text = "The answer model exceeded its time limit. Please try again."
         final_answer = clean_llm_response(response_text)
         if not final_answer:
-            final_answer = "I couldn't finish an answer. Please try again with a shorter or more specific question."
+            final_answer = "The answer model returned no usable final answer. Please try again."
+
+        logger.info("Query completed in %.2fs", perf_counter() - started)
 
         return {
             "answer": final_answer,

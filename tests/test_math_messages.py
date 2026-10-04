@@ -8,6 +8,59 @@ from src.bot.math_messages import Part, prepare_answer, segments, split_text, se
 from src.config import LatexSettings
 
 
+COURSE_FORMULA = r"QLTY = 100 \times \frac{\sum_{i=1}^{#TUS} QLTY_i}{#TUS}"
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+@pytest.mark.asyncio
+async def test_course_formula_renders_with_literal_counts(wrapped):
+    renderer = Mock(settings=LatexSettings(), render_many=AsyncMock(return_value=[RenderResult(png=b"png")]))
+    equation = "$$" + COURSE_FORMULA + "$$" if wrapped else COURSE_FORMULA
+    parts = await prepare_answer("Formula:\n" + equation + "\nExplanation.", renderer)
+    assert [part.text for part in parts] == ["Formula:\n", "**Equation 1**", "\nExplanation."]
+    assert parts[1].png and parts[1].expression == COURSE_FORMULA
+    renderer.render_many.assert_awaited_once_with(
+        [COURSE_FORMULA.replace("#", r"\#")], scale=2.0, theme="light")
+
+
+@pytest.mark.parametrize("answer", [
+    "```tex\n" + COURSE_FORMULA + "\n```",
+    "~~~\n" + COURSE_FORMULA + "\n~~~",
+    "`" + COURSE_FORMULA + "`",
+    "Explain " + COURSE_FORMULA,
+    "Price = $5 and " + COURSE_FORMULA,
+    r"x = \frac{1}{2} $$unfinished",
+    "Ordinary prose.",
+])
+def test_bare_equation_detection_preserves_non_math(answer):
+    assert segments(answer) == [("text", answer)]
+
+
+@pytest.mark.asyncio
+async def test_already_escaped_count_is_not_double_escaped():
+    renderer = Mock(settings=LatexSettings(), render_many=AsyncMock(return_value=[RenderResult(png=b"png")]))
+    formula = COURSE_FORMULA.replace("#", r"\#")
+    await prepare_answer("$$" + formula + "$$", renderer)
+    assert renderer.render_many.call_args.args == ([formula],)
+
+
+@pytest.mark.latex_real
+@pytest.mark.asyncio
+async def test_course_formula_produces_real_png():
+    from src.bot.latex_renderer import LatexRenderer
+
+    renderer = LatexRenderer(LatexSettings())
+    try:
+        if not await renderer.probe():
+            pytest.skip("Local Node renderer dependencies unavailable")
+        parts = await prepare_answer(COURSE_FORMULA, renderer)
+        assert len(parts) == 1
+        assert parts[0].png.startswith(b"\x89PNG\r\n\x1a\n")
+        assert parts[0].expression == COURSE_FORMULA
+    finally:
+        await renderer.close()
+
+
 def test_scanner_preserves_code_prices_and_malformed_math():
     answer = "Price $5, `$$code$$`, and\n~~~tex\n$$sample$$\n~~~\nReal \\(x+1\\). Broken $$x"
     assert segments(answer) == [

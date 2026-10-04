@@ -1,14 +1,78 @@
+import json
+import asyncio
+from contextlib import asynccontextmanager, contextmanager
+
 import pytest
+import httpx
 from unittest.mock import AsyncMock, patch, MagicMock
 from src.core.ollama_client import OllamaClient
 from src.config import config
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ending", ["done", "incomplete", "error", "deadline", "idle"])
+async def test_chat_stream_progress_and_failures(monkeypatch, ending):
+    closed = False
+
+    class Stream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'{"message":{"thinking":"private reasoning"},"done":false}\n'
+            yield b'{"message":{"content":"Final "},"done":false}\n'
+            if ending == "deadline":
+                await asyncio.sleep(10)
+            elif ending == "idle":
+                raise httpx.ReadTimeout("No progress")
+            elif ending == "error":
+                yield b'{"error":"model failed"}\n'
+            elif ending == "done":
+                yield b'{"message":{"content":"answer"},"done":true}\n'
+
+        async def aclose(self):
+            nonlocal closed
+            closed = True
+
+    def handler(request):
+        assert json.loads(request.content)["stream"] is True
+        assert request.url.path == "/api/chat"
+        return httpx.Response(200, stream=Stream())
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: real_client(
+        transport=httpx.MockTransport(handler), **kwargs))
+    monkeypatch.setattr(config.ollama, "generation_timeout", 0.1)
+    if ending == "done":
+        assert await OllamaClient().generate("question") == "Final answer"
+    else:
+        error = {"deadline": TimeoutError, "idle": httpx.ReadTimeout}.get(ending, RuntimeError)
+        with pytest.raises(error):
+            await OllamaClient().generate("question")
+    assert closed
+
+
+@contextmanager
+def mock_chat_stream():
+    """Adapt a complete fixture response to the chat NDJSON wire format."""
+    request = AsyncMock()
+
+    @asynccontextmanager
+    async def stream(client, method, url, **kwargs):
+        response = await request(url, **kwargs)
+
+        async def lines():
+            yield json.dumps({**response.json(), "done": True})
+
+        response.aiter_lines = lines
+        yield response
+
+    with patch("httpx.AsyncClient.stream", new=stream):
+        yield request
 
 @pytest.mark.asyncio
 async def test_ollama_generate_options_and_keep_alive(monkeypatch):
     monkeypatch.setattr(config.ollama, "llm_num_ctx", 6144)
     client = OllamaClient()
     
-    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+    with mock_chat_stream() as mock_post:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"message": {"content": "Test completion"}}
@@ -21,6 +85,7 @@ async def test_ollama_generate_options_and_keep_alive(monkeypatch):
         args, kwargs = mock_post.call_args
         assert args[0].endswith("/api/chat")
         payload = kwargs.get("json", {})
+        assert payload["stream"] is True
         assert payload["model"] == config.ollama.llm_model
         assert payload["messages"] == [{"role": "user", "content": "Hello world"}]
         assert "prompt" not in payload
@@ -32,6 +97,7 @@ async def test_ollama_generate_options_and_keep_alive(monkeypatch):
             "top_p": 0.9,
             "top_k": 40,
             "repeat_penalty": 1.05,
+            "num_predict": config.ollama.llm_max_tokens,
         }
 
 @pytest.mark.asyncio
@@ -78,7 +144,7 @@ async def test_ollama_get_embeddings_cpu_pinning():
 async def test_ollama_generate_think_parameter_override():
     client = OllamaClient()
 
-    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+    with mock_chat_stream() as mock_post:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"message": {"content": "Clean answer"}}
@@ -99,7 +165,7 @@ async def test_ollama_generate_think_parameter_override():
 async def test_ollama_generate_sanitizes_thinking_and_closing_tag():
     client = OllamaClient()
 
-    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+    with mock_chat_stream() as mock_post:
         mock_response = MagicMock()
         mock_response.status_code = 200
         # Simulates model output where prompt template added <think> and model ended with </think>
@@ -141,7 +207,7 @@ async def test_ollama_generate_400_fallback_without_think():
 async def test_chat_never_returns_drafting_as_answer(content):
     client = OllamaClient()
     draft = "The user is asking about supervised learning. Let's outline the answer."
-    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+    with mock_chat_stream() as mock_post:
         response = MagicMock()
         response.status_code = 200
         response.json.return_value = {

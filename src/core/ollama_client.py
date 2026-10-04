@@ -1,7 +1,10 @@
+import asyncio
+import json
 import re
 import base64
 from pathlib import Path
 import logging
+from time import perf_counter
 from typing import List, Dict, Any, Optional, AsyncGenerator
 import httpx
 from src.config import config
@@ -92,6 +95,7 @@ class OllamaClient:
                 "top_p": config.ollama.llm_top_p,
                 "top_k": config.ollama.llm_top_k,
                 "repeat_penalty": config.ollama.llm_repeat_penalty,
+                "num_predict": config.ollama.llm_max_tokens,
             }
         elif model == config.ollama.router_model:
             defaults = {
@@ -168,6 +172,37 @@ class OllamaClient:
         payload["think"] = use_think
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
+            if use_chat:
+                # Receive progress during thinking/decoding instead of waiting
+                # silently for the entire completion under one read timeout.
+                payload["stream"] = True
+                pieces = []
+                started = perf_counter()
+                thinking_chars = 0
+                async with asyncio.timeout(config.ollama.generation_timeout):
+                    async with client.stream("POST", f"{self.base_url}/api/chat", json=payload) as res:
+                        res.raise_for_status()
+                        async for line in res.aiter_lines():
+                            if not line.strip():
+                                continue
+                            chunk = json.loads(line)
+                            if chunk.get("error"):
+                                raise RuntimeError(f"Ollama generation failed: {chunk['error']}")
+                            # Never expose the separate thinking field, even when
+                            # an answer is empty or the stream ends prematurely.
+                            pieces.append(chunk.get("message", {}).get("content") or "")
+                            thinking_chars += len(chunk.get("message", {}).get("thinking") or "")
+                            if chunk.get("done"):
+                                answer = clean_llm_response("".join(pieces))
+                                logger.info(
+                                    "Chat completed: model=%s elapsed=%.2fs reason=%s tokens=%s thinking_chars=%d answer_chars=%d",
+                                    target_model, perf_counter() - started, chunk.get("done_reason"),
+                                    chunk.get("eval_count"), thinking_chars, len(answer),
+                                )
+                                if not answer:
+                                    logger.warning("Chat completed without a usable final answer")
+                                return answer
+                        raise RuntimeError("Ollama stream ended before completion")
             res = await client.post(f"{self.base_url}/api/{endpoint}", json=payload)
             if res.status_code == 400 and "think" in payload and not use_chat:
                 # If an older Ollama daemon does not support the 'think' parameter, retry without it

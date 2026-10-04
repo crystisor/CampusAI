@@ -52,6 +52,21 @@ def segments(answer: str) -> list[tuple[str, str]]:
                 i += len(match.group(0))
                 line_start = False
                 continue
+        if line_start and not fence and not code_ticks:
+            # Models sometimes omit delimiters around a standalone equation.
+            # Require an equation-shaped left side and a known TeX command;
+            # leave prose, code, prices, and malformed marked math alone.
+            line = answer[i:].split("\n", 1)[0]
+            if (re.match(r"^\s*(?:[A-Za-z][A-Za-z0-9_{}^]*|\\[A-Za-z]+)\s*=", line)
+                    and re.search(r"\\(?:frac|dfrac|tfrac|sum|prod|int|sqrt|times|cdot)\b", line)
+                    and not any(marker in line for marker in ("`", "$", r"\(", r"\)", r"\[", r"\]"))):
+                if plain:
+                    result.append(("text", "".join(plain)))
+                    plain = []
+                result.append(("math", line.strip()))
+                i += len(line)
+                line_start = False
+                continue
         ch = answer[i]
         if ch == "\n":
             line_start = True
@@ -157,7 +172,10 @@ async def prepare_answer(answer: str, renderer: LatexRenderer | None, *, header:
     eligible = []
     for kind, value in found:
         if kind == "math" and len(value) <= renderer.settings.max_expression_chars and len(eligible) < renderer.settings.max_expressions_per_answer:
-            eligible.append(value)
+            # Course notation uses # for counts. TeX needs a literal hash
+            # escaped; preserve the original source for attachment text/fallback.
+            eligible.append("".join(r"\#" if ch == "#" and not _escaped(value, index) else ch
+                                    for index, ch in enumerate(value)))
     results = await renderer.render_many(eligible, scale=renderer.settings.scale, theme=renderer.settings.theme) if eligible else []
     output = []
     pending = header

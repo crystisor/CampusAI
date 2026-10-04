@@ -114,3 +114,17 @@ def test_pdf_render_provenance(tmp_path, rendered):
         assert page.text == "Native text"
         assert page.image_is_rendered is rendered
         assert page.image_path.exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_vectors", [[], [[0.0] * 1024], [[float("nan")] * 1024], [[0.1]]])
+async def test_invalid_embeddings_never_reach_index(tmp_path, monkeypatch, bad_vectors):
+    monkeypatch.setattr(config.ingestion, "storage_dir", tmp_path)
+    processor = MagicMock()
+    processor.extract_pages.return_value = [PDFPageData(1, "Course text. " * 10)]
+    client = MagicMock(get_embeddings=AsyncMock(return_value=bad_vectors))
+    qdrant = MagicMock(upsert_chunks=AsyncMock())
+    pipeline = IngestionPipeline(pdf_processor=processor, ollama_client=client, qdrant_manager=qdrant)
+    with pytest.raises(RuntimeError, match="indexing stopped"):
+        await pipeline.ingest_pdf(tmp_path / "course.pdf", "subject")
+    qdrant.upsert_chunks.assert_not_awaited()

@@ -25,6 +25,7 @@ class OllamaSettings(BaseModel):
     llm_top_p: float = 0.9
     llm_top_k: int = 40
     llm_repeat_penalty: float = 1.05
+    llm_max_tokens: int = Field(default=1024, gt=0)
     router_model: str = "Arch-Router"
     router_num_gpu: int = 0     # Offload to CPU
     router_keep_alive: str = "30m"
@@ -34,6 +35,7 @@ class OllamaSettings(BaseModel):
     embedding_num_gpu: int = 0  # Offload to CPU
     embedding_keep_alive: str = "30m"
     request_timeout: float = 120.0
+    generation_timeout: float = Field(default=90.0, gt=0, allow_inf_nan=False)
 
 class RerankerSettings(BaseModel):
     model_name: str = "BAAI/bge-reranker-v2-m3"
