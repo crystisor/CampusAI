@@ -12,8 +12,39 @@ from src.bot.channel_manager import channel_manager
 from src.rag.pipeline import RAGPipeline
 from src.core.ollama_client import clean_llm_response
 from src.config import config
+from src.bot.math_messages import Part, prepare_answer, send_study_parts, MENTIONS
 
 logger = logging.getLogger(__name__)
+
+
+def format_references(contexts: list[dict]) -> str:
+    """List every source passed to answer generation, grouping repeated PDF pages."""
+    course_pages: dict[str, list[str]] = {}
+    web_sources: list[str] = []
+    for context in contexts:
+        metadata = context.get("metadata") or {}
+        if context.get("source") == "course_material":
+            document = str(metadata.get("document_name") or "Unknown course material")
+            number = metadata.get("course_number")
+            label = f"Course {number} ({document})" if number is not None else f"Course: {document}"
+            page = metadata.get("page_number")
+            page_label = str(page) if page is not None else "unknown"
+            pages = course_pages.setdefault(label, [])
+            if page_label not in pages:
+                pages.append(page_label)
+        elif context.get("source") == "web_search":
+            url = str(metadata.get("url") or "Search result")
+            if url not in web_sources:
+                web_sources.append(url)
+
+    if not course_pages and not web_sources:
+        return ""
+    lines = ["**Sources:**"]
+    for label, pages in course_pages.items():
+        kind = "Slide/page" if len(pages) == 1 else "Slides/pages"
+        lines.append(f"- {label} — {kind} {', '.join(pages)}")
+    lines.extend(f"- Web: {url}" for url in web_sources)
+    return "\n\n" + "\n".join(lines)
 
 
 def source_formula_page(query: str, contexts: list[dict], subject_id: str) -> Optional[tuple[Path, int]]:
@@ -88,6 +119,7 @@ class StudyChatCog(commands.Cog, name="StudyChat"):
                     query=user_query,
                     subject_id=subject_id,
                     subject_name=subject_name,
+                    render_math=self.bot.latex_renderer.auto_available,
                 )
 
                 raw_answer = result.get("answer", "I could not generate an explanation at this time.")
@@ -95,56 +127,36 @@ class StudyChatCog(commands.Cog, name="StudyChat"):
                 decision = result.get("decision", "DIRECT")
                 top_contexts = result.get("top_contexts", [])
                 formula_page = source_formula_page(user_query, top_contexts, subject_id)
-                formula_file = None
+                parts = await prepare_answer(
+                    answer, self.bot.latex_renderer,
+                    header=f"**[{subject_name}]** `Intent: {decision}`\n\n",
+                    footer=format_references(top_contexts),
+                )
+                if not await send_study_parts(message, parts):
+                    return
                 if formula_page:
+                    formula_file = None
                     try:
+                        can_attach = message.guild.me is None or message.channel.permissions_for(message.guild.me).attach_files
+                        if not can_attach:
+                            return
                         formula_file = await render_formula_page(formula_page)
+                        if formula_file.fp.seek(0, 2) <= message.guild.filesize_limit:
+                            formula_file.fp.seek(0)
+                            await message.channel.send(
+                                f"**Source PDF page:** {formula_page[0].name}, page {formula_page[1]}",
+                                file=formula_file, allowed_mentions=MENTIONS,
+                            )
                     except Exception as exc:
-                        logger.warning("Could not render source formula page: %s", exc)
-
-                # Format response for Discord
-                # Discord messages have a 2000 character limit per message
-                # If longer, split into sequential messages
-                reply_text = f"**[{subject_name}]** `Intent: {decision}`\n\n{answer}"
-                if formula_file:
-                    reply_text += "\n\n**Formula as printed in the PDF:** see the attached source page."
-
-                # Append references if available
-                if top_contexts:
-                    sources_preview = "\n\n📚 **References Consulted:**\n"
-                    for idx, ctx in enumerate(top_contexts[:3], 1):
-                        source = ctx.get("source", "course")
-                        meta = ctx.get("metadata", {})
-                        doc_name = meta.get("document_name", "Material")
-                        page = meta.get("page_number", "?")
-                        if source == "course_material":
-                            sources_preview += f"• `{doc_name}` (Page {page})\n"
-                        else:
-                            sources_preview += f"• Web: {ctx.get('metadata', {}).get('url', 'Search result')}\n"
-
-                    # If fits in message limit, attach directly
-                    if len(reply_text) + len(sources_preview) < 1950:
-                        reply_text += sources_preview
-
-                # Send message chunked if > 2000 chars
-                if len(reply_text) <= 2000:
-                    if formula_file:
-                        await message.reply(reply_text, file=formula_file)
-                    else:
-                        await message.reply(reply_text)
-                else:
-                    chunks = [reply_text[i:i+1950] for i in range(0, len(reply_text), 1950)]
-                    for chunk in chunks:
-                        await message.channel.send(chunk)
-                    if formula_file:
-                        await message.channel.send(
-                            "**Formula as printed in the PDF:**",
-                            file=formula_file,
-                        )
+                        logger.warning("Could not deliver source PDF page in channel %s (%s)", message.channel.id, type(exc).__name__)
+                    finally:
+                        if formula_file:
+                            formula_file.close()
+                            formula_file.fp.close()
 
             except Exception as e:
                 logger.error(f"Error handling message in #{message.channel.name}: {e}", exc_info=True)
-                await message.reply(f"⚠️ An error occurred while processing your study query: `{str(e)}`")
+                await send_study_parts(message, [Part("An error occurred while processing your study query.")])
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(StudyChatCog(bot))

@@ -1,6 +1,7 @@
 import os
 import asyncio
 import logging
+import math
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable, Awaitable
 
@@ -152,15 +153,18 @@ class IngestionPipeline:
                     num_gpu=config.ollama.embedding_num_gpu,
                     keep_alive=config.ollama.embedding_keep_alive,
                 )
-                if len(batch_vecs) == len(batch):
-                    vectors.extend(batch_vecs)
-                else:
-                    for _ in range(len(batch) - len(batch_vecs)):
-                        batch_vecs.append([0.0] * config.embeddings.vector_size)
-                    vectors.extend(batch_vecs)
+                if len(batch_vecs) != len(batch):
+                    raise ValueError("Embedding count does not match the input batch")
+                for vector in batch_vecs:
+                    if (len(vector) != config.embeddings.vector_size
+                            or not all(math.isfinite(value) for value in vector)
+                            or not any(value != 0 for value in vector)):
+                        raise ValueError("Embedding must be finite, nonzero, and have the configured dimension")
+                vectors.extend(batch_vecs)
             except Exception as e:
-                logger.warning(f"Batch embedding failure for slice {i}:{i+batch_size}: {e}")
-                vectors.extend([[0.0] * config.embeddings.vector_size] * len(batch))
+                raise RuntimeError(
+                    f"Embedding failed for chunks {i}:{i + len(batch)}; indexing stopped."
+                ) from e
 
         await emit("embed", 95, f"All {len(vectors)} vectors generated.")
 

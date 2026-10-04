@@ -1,4 +1,4 @@
-from src.bot.cogs.study_chat import source_formula_page
+from src.bot.cogs.study_chat import format_references, source_formula_page
 from src.config import config
 
 
@@ -24,3 +24,21 @@ def test_formula_page_rejects_metadata_outside_subject(tmp_path, monkeypatch):
         "document_name": "../../outside", "page_number": 5,
     }}]
     assert source_formula_page("Print the formula", contexts, "articles") is None
+
+
+def test_references_include_every_course_page_and_web_source():
+    contexts = [
+        {"source": "course_material", "metadata": {"document_name": "Lecture 2", "page_number": 4}},
+        {"source": "course_material", "metadata": {"document_name": "Lecture 2", "page_number": 4}},
+        {"source": "course_material", "metadata": {"document_name": "Lecture 2", "page_number": 7}},
+        {"source": "course_material", "metadata": {"document_name": "Lecture 3", "course_number": 3, "page_number": 2}},
+        {"source": "web_search", "metadata": {"url": "https://example.org/source"}},
+    ]
+
+    references = format_references(contexts)
+
+    assert "Course: Lecture 2 — Slides/pages 4, 7" in references
+    assert "Course 3 (Lecture 3) — Slide/page 2" in references
+    assert "Web: https://example.org/source" in references
+    assert references.count("Lecture 2 —") == 1
+    assert format_references([]) == ""

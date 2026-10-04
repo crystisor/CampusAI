@@ -1,5 +1,6 @@
 import uuid
 import logging
+import re
 from typing import List, Dict, Any, Optional
 from qdrant_client import QdrantClient, AsyncQdrantClient
 from qdrant_client.http import models as rest
@@ -124,6 +125,28 @@ class QdrantManager:
             )
 
         return candidates
+
+    async def find_table(self, subject_id: str, number: str) -> List[RerankerCandidate]:
+        """Find actual numbered captions in stored text, including beyond vector top-k."""
+        caption = re.compile(
+            rf"(?im)^\s*(?:\#{{1,6}}\s+)?(?:\*\*)?table\s+{re.escape(number)}"
+            rf"(?:\*\*)?\s*(?=[:.\-\u2013\u2014]|$)"
+        )
+        matches = []
+        offset = None
+        while True:
+            points, offset = await self.client.scroll(
+                collection_name=self._get_collection_name(subject_id),
+                limit=100, offset=offset, with_payload=True, with_vectors=False,
+            )
+            for point in points:
+                payload = point.payload or {}
+                text = payload.get("text", "")
+                if caption.search(text):
+                    matches.append(RerankerCandidate(text, "course_material", payload))
+            if offset is None:
+                break
+        return matches
 
     async def get_subject_stats(self, subject_id: str) -> Dict[str, Any]:
         """Get vector count and point stats for a subject."""

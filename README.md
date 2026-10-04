@@ -242,6 +242,50 @@ Once the bot is connected to Discord, it can be used through the configured serv
 | `/status`                      | Display service health, VRAM usage, and vector count for the bound subject. |
 | `/subjects`                    | List registered academic subjects and their associated channels.            |
 | `/ask <question> [subject_id]` | Ask CampusAI a question, optionally overriding the channel's bound subject. |
+| `/latex <code> [scale] [theme]` | Render a mathematical TeX expression without asking the LLM. |
+
+### Mathematical answers in Discord
+
+Install Node.js 24 LTS (verified with 24.21.0) on the machine running the bot,
+then install the locked local renderer dependencies:
+
+```powershell
+npm ci --prefix tools/latex-renderer
+```
+
+The bot checks the renderer at startup. When available, subject-channel replies
+and `/ask` can show equations automatically as labeled PNG attachments alongside
+their explanations and citations. The model chooses when notation is useful;
+ordinary answers stay as text. Use `/latex` for a direct render of mathematical
+TeX such as `\frac{a}{b}`, `\begin{pmatrix}1&2\\3&4\end{pmatrix}`, or an
+integral. Bare TeX and one enclosing `$$...$$`, `\[...\]`, or `\(...\)` pair
+are accepted. Choose a light or dark image background and a scale from 0.5 to 3.
+
+The helper works locally without a browser or TeX compiler. It handles math
+commands from MathJax's base and AMS packages, with up to four expressions per
+answer and 2,000 characters per expression. Full LaTeX documents, arbitrary
+packages, and resource loading commands are unsupported. The `latex` section in
+`config.yaml` controls availability, theme, scale, timeout, and size limits. If
+startup reports the renderer unavailable, check Node on `PATH`, run the `npm ci`
+command above on that host, and restart the bot. Text answers remain available
+when the renderer or Attach Files permission is unavailable. Install packages on
+each deployment platform; do not copy `node_modules` between Windows and Linux.
+
+Rendering uses one local process per batch, with a 10-second deadline and no
+waiting queue. Busy, invalid, oversized, or failed equations fall back to copyable
+TeX without regenerating the answer. Each image is limited to 2,048 × 1,024 pixels
+and 1 MiB; smaller destination upload limits are also respected. A process failure
+disables rendering until a successful probe or restart. The bot never installs
+dependencies during startup. Set `latex.node_executable` to an absolute Node path
+if the bot's service account has a different `PATH`.
+
+Run the Python checks without Node using `python -m pytest tests/ -m "not latex_real"`.
+After `npm ci`, run `python -m pytest tests/` to include real rendering. The real
+renderer checks are marked `latex_real` and skip if Node or the local dependencies
+are absent. Set `LATEX_TEST_NODE` to a particular Node executable when checking
+another runtime. Fixtures cover both image themes, integrals, matrices, aligned
+rows, cases, invalid TeX, parser isolation, and bounded process cleanup. Live
+Discord desktop/mobile display and permissions still need a server smoke test.
 
 ### Example
 

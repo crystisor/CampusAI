@@ -1,4 +1,5 @@
 import logging
+import threading
 from typing import List, Dict, Any, Tuple, Optional
 from src.config import config
 
@@ -35,6 +36,7 @@ class Reranker:
         self._model = None
         self._tokenizer = None
         self._initialized = False
+        self._lock = threading.Lock()
 
     def _lazy_init(self):
         """Load model on first call to save memory during bot startup."""
@@ -67,6 +69,17 @@ class Reranker:
         candidates: List[RerankerCandidate],
         top_k: Optional[int] = None,
     ) -> List[RerankerCandidate]:
+        # Worker calls may overlap, including after an awaiting task is cancelled.
+        # Serialize model loading and inference on the worker, never the event loop.
+        with self._lock:
+            return self._rerank(query, candidates, top_k)
+
+    def _rerank(
+        self,
+        query: str,
+        candidates: List[RerankerCandidate],
+        top_k: Optional[int] = None,
+    ) -> List[RerankerCandidate]:
         """
         Reranks candidates and returns the top 4 to 5 highest scoring items.
         """
@@ -82,20 +95,36 @@ class Reranker:
                 pairs = [[query, c.text] for c in candidates]
                 with torch.no_grad():
                     inputs = self._tokenizer(
-                        pairs,
+                        [pair[0] for pair in pairs],
+                        [pair[1] for pair in pairs],
                         padding=True,
-                        truncation=True,
+                        truncation="only_second",
                         max_length=self.max_length,
+                        stride=min(128, self.max_length // 4),
+                        return_overflowing_tokens=True,
                         return_tensors="pt"
-                    ).to(self._target_device)
-                    
-                    scores = self._model(**inputs, return_dict=True).logits.view(-1).float().cpu().tolist()
+                    )
+                    # Pages can exceed the token limit; score every overlapping
+                    # passage instead of silently discarding formulas near the end.
+                    owners = inputs.pop("overflow_to_sample_mapping").tolist()
+                    scores = [float("-inf")] * len(candidates)
+                    for start in range(0, len(owners), 8):
+                        batch = {key: value[start:start + 8].to(self._target_device)
+                                 for key, value in inputs.items()}
+                        window_scores = self._model(**batch, return_dict=True).logits.view(-1).float().cpu().tolist()
+                        for owner, score in zip(owners[start:start + 8], window_scores):
+                            scores[owner] = max(scores[owner], score)
 
                 for candidate, score in zip(candidates, scores):
                     candidate.score = float(score)
 
                 sorted_candidates = sorted(candidates, key=lambda x: x.score, reverse=True)
-                return [c for c in sorted_candidates if c.score >= self.score_threshold][:k]
+                selected = [c for c in sorted_candidates if c.score >= self.score_threshold][:k]
+                logger.info(
+                    "Reranker raw scores: min=%.3f max=%.3f threshold=%s kept=%d/%d",
+                    min(scores), max(scores), self.score_threshold, len(selected), len(candidates),
+                )
+                return selected
             except Exception as e:
                 logger.error(f"Error during neural reranking: {e}. Using heuristic fallback.")
 

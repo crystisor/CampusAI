@@ -7,12 +7,13 @@ ollama:
   base_url: "http://localhost:11434"
   llm_model: "Spark-X2.5-4b-Q8_0"
   llm_keep_alive: "-1"         # Keep permanently hot in GPU VRAM
-  think: true                  # Enable model thinking; Discord receives only the filtered final answer
+  think: false                 # Prefer direct answers for interactive Discord requests
   llm_temperature: 0.2
   llm_num_ctx: 16384
   llm_top_p: 0.9
   llm_top_k: 40
   llm_repeat_penalty: 1.05
+  llm_max_tokens: 1024         # Bound generation with Ollama num_predict
   router_model: "Arch-Router"
   router_num_gpu: 0            # Offload to CPU (avoids GPU VRAM evictions)
   router_keep_alive: "30m"
@@ -22,6 +23,7 @@ ollama:
   embedding_num_gpu: 0         # Offload to CPU (avoids GPU VRAM evictions)
   embedding_keep_alive: "30m"
   request_timeout: 120.0
+  generation_timeout: 90.0    # Overall chat deadline; request_timeout limits idle reads
 
 embeddings:
   vector_size: 1024
@@ -31,7 +33,7 @@ embeddings:
 reranker:
   model_name: "BAAI/bge-reranker-v2-m3"
   top_k: 5
-  max_length: 768
+  max_length: 384              # Short overlapping windows reduce CPU reranking cost
   initial_qdrant_candidates: 15
   initial_web_candidates: 8
   score_threshold: 0.0        # Minimum raw reranker score, inclusive
@@ -52,7 +54,7 @@ ingestion:
   layout_model: "pp-doclayoutV3"
   ocr_model: "glm-ocr-eot"
   ocr_min_text_chars: 80       # OCR pages below this non-whitespace character count
-  ocr_formula_pages: false    # Also OCR pages with math-heavy lines (heuristic)
+  ocr_formula_pages: true     # Preserve formula layout on detected math-heavy pages
   ocr_keep_alive: "1m"       # Release OCR model after inactivity
   storage_dir: "storage/subjects"
   dpi: 200
@@ -63,3 +65,17 @@ ingestion:
 web:
   host: "127.0.0.1"
   port: 8000
+
+latex:
+  enabled: true
+  auto_render: true
+  node_executable: "node"
+  theme: "light"
+  scale: 2.0
+  timeout_seconds: 10.0
+  max_expression_chars: 2000
+  max_expressions_per_answer: 4
+  max_width: 2048
+  max_height: 1024
+  max_pixels: 2097152
+  max_png_bytes: 1048576

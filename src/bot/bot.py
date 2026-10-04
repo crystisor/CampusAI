@@ -5,6 +5,7 @@ import discord
 from discord.ext import commands
 
 from src.config import config
+from src.bot.latex_renderer import LatexRenderer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,12 +25,15 @@ class StudyBot(commands.Bot):
             intents=intents,
             help_command=None
         )
+        self.latex_renderer = LatexRenderer(config.latex)
 
     async def setup_hook(self):
+        await self.latex_renderer.probe()
         # Load cogs
         cogs = [
             "src.bot.cogs.study_chat",
             "src.bot.cogs.admin",
+            "src.bot.cogs.latex",
         ]
         for cog in cogs:
             try:
@@ -45,6 +49,10 @@ class StudyBot(commands.Bot):
             logger.info(f"Successfully synced {len(synced)} slash commands.")
         except Exception as e:
             logger.error(f"Error syncing slash commands: {e}")
+
+    async def close(self):
+        await self.latex_renderer.close()
+        await super().close()
 
     async def on_ready(self):
         logger.info(f"Bot logged in as {self.user} (ID: {self.user.id})")

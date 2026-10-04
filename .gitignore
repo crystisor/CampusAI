@@ -78,6 +78,7 @@ nosetests.xml
 *.db-journal
 *.db-wal
 *.db-shm
+/PLANS
 
 # ==============================================================================
 # Graphify Knowledge Graph Artifacts

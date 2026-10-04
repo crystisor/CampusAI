@@ -9,6 +9,8 @@ from src.rag.qdrant_manager import QdrantManager
 from src.core.ollama_client import OllamaClient, clean_llm_response
 from src.rag.pipeline import RAGPipeline
 from src.config import config
+from src.bot.math_messages import Part, prepare_answer, send_interaction_parts
+from src.bot.cogs.study_chat import format_references
 
 logger = logging.getLogger(__name__)
 
@@ -120,22 +122,22 @@ class AdminCog(commands.Cog, name="Admin"):
             res = await self.pipeline.process_query(
                 query=question,
                 subject_id=target_sub,
-                subject_name=target_sub.replace("_", " ").title()
+                subject_name=target_sub.replace("_", " ").title(),
+                render_math=self.bot.latex_renderer.auto_available,
             )
             raw_answer = res.get("answer", "")
             answer = clean_llm_response(raw_answer)
             decision = res.get("decision", "DIRECT")
 
-            reply = f"**[{target_sub.upper()}]** `Intent: {decision}`\n\n{answer}"
-            if len(reply) <= 2000:
-                await interaction.followup.send(reply)
-            else:
-                chunks = [reply[i:i+1950] for i in range(0, len(reply), 1950)]
-                await interaction.followup.send(chunks[0])
-                for chunk in chunks[1:]:
-                    await interaction.channel.send(chunk)
+            parts = await prepare_answer(
+                answer, self.bot.latex_renderer,
+                header=f"**[{target_sub.upper()}]** `Intent: {decision}`\n\n",
+                footer=format_references(res.get("top_contexts", [])),
+            )
+            await send_interaction_parts(interaction, parts)
         except Exception as e:
-            await interaction.followup.send(f"⚠️ Error answering question: `{e}`")
+            logger.error("Error answering /ask", exc_info=True)
+            await send_interaction_parts(interaction, [Part("Error answering question.")])
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AdminCog(bot))
