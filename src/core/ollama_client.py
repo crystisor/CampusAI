@@ -135,6 +135,7 @@ class OllamaClient:
         options: Optional[Dict[str, Any]] = None,
         keep_alive: Optional[str] = None,
         think: Optional[bool] = None,
+        history: Optional[List[Dict[str, str]]] = None,
     ) -> str:
         """Generate a complete text completion with thinking process filtered out."""
         target_model = model or config.ollama.llm_model
@@ -164,6 +165,7 @@ class OllamaClient:
             payload["messages"] = []
             if system:
                 payload["messages"].append({"role": "system", "content": system})
+            payload["messages"].extend({"role": item["role"], "content": item["content"]} for item in (history or []))
             payload["messages"].append({"role": "user", "content": prompt})
         if merged_options:
             payload["options"] = merged_options
@@ -267,6 +269,7 @@ class OllamaClient:
         options: Optional[Dict[str, Any]] = None,
         keep_alive: Optional[str] = None,
         think: Optional[bool] = None,
+        history: Optional[List[Dict[str, str]]] = None,
     ) -> AsyncGenerator[str, None]:
         """Stream final-answer text from Ollama without exposing reasoning."""
         target_model = model or config.ollama.llm_model
@@ -290,6 +293,7 @@ class OllamaClient:
             payload["messages"] = []
             if system:
                 payload["messages"].append({"role": "system", "content": system})
+            payload["messages"].extend({"role": item["role"], "content": item["content"]} for item in (history or []))
             payload["messages"].append({"role": "user", "content": prompt})
         else:
             payload["prompt"] = prompt

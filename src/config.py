@@ -17,7 +17,7 @@ class DiscordSettings(BaseModel):
 
 class OllamaSettings(BaseModel):
     base_url: str = Field(default_factory=lambda: os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))
-    llm_model: str = "gemma4_e2b_q8:latest"
+    llm_model: str = "Spark-X2.5-4b-Q8_0:latest"
     llm_keep_alive: str = "-1"  # Permanently keep LLM hot in GPU VRAM
     think: bool = False         # Controls model thinking; output filtering is independent
     llm_temperature: float = 0.2
@@ -59,8 +59,6 @@ class QdrantSettings(BaseModel):
     collection_prefix: str = "subject_"
 
 class SearchSettings(BaseModel):
-    provider: Literal["duckduckgo", "tavily"] = "duckduckgo"
-    tavily_api_key: Optional[str] = Field(default_factory=lambda: os.getenv("TAVILY_API_KEY", ""))
     max_results: int = 8
 
 class IngestionSettings(BaseModel):
