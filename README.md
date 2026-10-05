@@ -26,6 +26,12 @@ The system is designed around privacy, local inference, and efficient retrieval 
 
 # 🏗️ Architecture
 
+### Temporary channel memory
+
+Use `/start` to enable shared conversation memory in a guild text channel. The session survives bot restarts and stores accepted questions and answers in `storage/sessions.sqlite3`. Everyone in the channel shares that context. `/start` does not reset an active session. Use `/end` to delete the session and its stored transcript; messages already posted in Discord remain visible. Without an active session, ordinary questions and `/ask` keep their stateless behavior. `/ask` subject overrides are retained with each turn.
+
+Conversation memory is currently supplied as stored conversation history; older session context can grow over time. Summaries are approximate recall, and exact recall of older details is not guaranteed.
+
 CampusAI uses a modular architecture consisting of:
 
 ### Clickable course sources in Discord

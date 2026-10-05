@@ -5,11 +5,11 @@ discord:
 
 ollama:
   base_url: "http://localhost:11434"
-  llm_model: "gemma4_e2b_q8:latest"
+  llm_model: "Spark-X2.5-4b-Q8_0:latest"
   llm_keep_alive: "-1"         # Keep permanently hot in GPU VRAM
   think: false                 # Prefer direct answers for interactive Discord requests
   llm_temperature: 0.2
-  llm_num_ctx: 8192            # Shared by chat and vision to avoid reloading Gemma
+  llm_num_ctx: 8192            # Context limit for chat and vision requests
   llm_top_p: 0.9
   llm_top_k: 40
   llm_repeat_penalty: 1.05
@@ -46,8 +46,6 @@ qdrant:
   collection_prefix: "subject_"
 
 search:
-  provider: "duckduckgo" # "duckduckgo" or "tavily"
-  tavily_api_key: "${TAVILY_API_KEY}"
   max_results: 8
 
 ingestion:

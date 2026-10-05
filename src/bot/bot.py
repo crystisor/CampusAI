@@ -28,6 +28,8 @@ class StudyBot(commands.Bot):
         self.latex_renderer = LatexRenderer(config.latex)
 
     async def setup_hook(self):
+        from src.bot.session_store import session_store
+        await session_store.initialize()
         await self.latex_renderer.probe()
         # Load cogs
         cogs = [

@@ -14,6 +14,7 @@ from src.rag.pipeline import RAGPipeline
 from src.core.ollama_client import clean_llm_response
 from src.config import config
 from src.bot.math_messages import Part, prepare_answer, send_study_parts, MENTIONS
+from src.bot.session_store import session_store
 
 logger = logging.getLogger(__name__)
 
@@ -165,8 +166,18 @@ class StudyChatCog(commands.Cog, name="StudyChat"):
         # Indicate typing while performing routing, retrieval, reranking, and generation
         async with message.channel.typing():
             stream_messages: list[discord.Message] = []
+            session = None
+            session_task = asyncio.current_task()
             try:
                 subject_name = subject_id.replace("_", " ").title()
+                session = await session_store.get(message.channel.id) if type(message.channel.id) is int else None
+                if session:
+                    session_store.register_task(message.channel.id, session_task)
+                summary, turns = await session_store.context(session.id) if session else ("", [])
+                if session:
+                    await session_store.append(session.id, message.channel.id, message.author.display_name, "user", user_query,
+                                               subject_id=subject_id, event_id=message.id)
+                history = [{"role": turn["role"], "content": f"{turn['speaker']} (subject {turn['subject_id'] or 'unknown'}): {turn['content']}"} for turn in turns]
                 header = f"**[{subject_name}]** `Generating answer...`\n\n"
                 stream_message = await message.reply(header, allowed_mentions=MENTIONS)
                 stream_messages.append(stream_message)
@@ -201,9 +212,13 @@ class StudyChatCog(commands.Cog, name="StudyChat"):
                     subject_name=subject_name,
                     render_math=self.bot.latex_renderer.auto_available,
                     on_token=show_token,
+                    conversation_summary=summary,
+                    conversation_history=history,
                 )
 
                 raw_answer = result.get("answer", "I could not generate an explanation at this time.")
+                if session and not await session_store.is_active(session.id, message.channel.id):
+                    return
                 answer = clean_llm_response(raw_answer)
                 decision = result.get("decision", "DIRECT")
                 top_contexts = result.get("top_contexts", [])
@@ -220,12 +235,22 @@ class StudyChatCog(commands.Cog, name="StudyChat"):
                         logger.debug("Could not remove streamed preview message %s", streamed_message.id)
                 if not await send_study_parts(message, parts):
                     return
+                if session:
+                    await session_store.append(session.id, message.channel.id, "CampusAI", "assistant", answer,
+                                               subject_id=subject_id, source_metadata={"contexts": top_contexts})
                 page_links = await publish_source_pages(message, top_contexts, subject_id)
                 references = format_references(top_contexts, page_links)
                 if references:
                     source_parts = await prepare_answer(references, None)
                     await send_study_parts(message, source_parts)
 
+            except asyncio.CancelledError:
+                for streamed_message in stream_messages:
+                    try:
+                        await streamed_message.delete()
+                    except discord.HTTPException:
+                        pass
+                raise
             except Exception as e:
                 logger.error(f"Error handling message in #{message.channel.name}: {e}", exc_info=True)
                 for streamed_message in stream_messages:
@@ -234,6 +259,9 @@ class StudyChatCog(commands.Cog, name="StudyChat"):
                     except discord.HTTPException:
                         pass
                 await send_study_parts(message, [Part("An error occurred while processing your study query.")])
+            finally:
+                if session:
+                    session_store.unregister_task(message.channel.id, session_task)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(StudyChatCog(bot))

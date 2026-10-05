@@ -1,4 +1,5 @@
 import logging
+import asyncio
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -11,6 +12,7 @@ from src.rag.pipeline import RAGPipeline
 from src.config import config
 from src.bot.math_messages import Part, prepare_answer, send_interaction_parts
 from src.bot.cogs.study_chat import format_references
+from src.bot.session_store import session_store
 
 logger = logging.getLogger(__name__)
 
@@ -118,14 +120,28 @@ class AdminCog(commands.Cog, name="Admin"):
         target_sub = subject_id or channel_manager.get_subject_for_channel(interaction.channel_id) or "general"
         await interaction.response.defer(thinking=True)
 
+        session = None
+        session_task = asyncio.current_task()
         try:
+            session = await session_store.get(interaction.channel_id) if type(interaction.channel_id) is int else None
+            if session:
+                session_store.register_task(interaction.channel_id, session_task)
+            summary, turns = await session_store.context(session.id) if session else ("", [])
+            history = [{"role": turn["role"], "content": f"{turn['speaker']} (subject {turn['subject_id'] or 'unknown'}): {turn['content']}"} for turn in turns]
+            if session:
+                await session_store.append(session.id, interaction.channel_id, interaction.user.display_name, "user", question,
+                                           subject_id=target_sub, event_id=interaction.id)
             res = await self.pipeline.process_query(
                 query=question,
                 subject_id=target_sub,
                 subject_name=target_sub.replace("_", " ").title(),
                 render_math=self.bot.latex_renderer.auto_available,
+                conversation_summary=summary,
+                conversation_history=history,
             )
             raw_answer = res.get("answer", "")
+            if session and not await session_store.is_active(session.id, interaction.channel_id):
+                return
             answer = clean_llm_response(raw_answer)
             decision = res.get("decision", "DIRECT")
 
@@ -135,9 +151,26 @@ class AdminCog(commands.Cog, name="Admin"):
                 footer=format_references(res.get("top_contexts", [])),
             )
             await send_interaction_parts(interaction, parts)
+            if session:
+                await session_store.append(session.id, interaction.channel_id, "CampusAI", "assistant", answer,
+                                           subject_id=target_sub, source_metadata={"contexts": res.get("top_contexts", [])})
         except Exception as e:
             logger.error("Error answering /ask", exc_info=True)
             await send_interaction_parts(interaction, [Part("Error answering question.")])
+        finally:
+            if session:
+                session_store.unregister_task(interaction.channel_id, session_task)
+
+    @app_commands.command(name="start", description="Start shared temporary memory for this channel")
+    async def start_session_cmd(self, interaction: discord.Interaction):
+        session, created = await session_store.create(interaction.channel_id, interaction.guild_id)
+        message = "Session started for this channel. Anyone here can use its conversation memory." if created else "A session is already active."
+        await interaction.response.send_message(message)
+
+    @app_commands.command(name="end", description="Delete this channel's temporary conversation memory")
+    async def end_session_cmd(self, interaction: discord.Interaction):
+        ended = await session_store.end(interaction.channel_id)
+        await interaction.response.send_message("Session ended and its stored memory was deleted." if ended else "No session is active in this channel.")
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AdminCog(bot))
